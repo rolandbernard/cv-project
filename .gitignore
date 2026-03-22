@@ -1,0 +1,30 @@
+# Temporary files
+.*
+!.gitignore
+/data
+/nets/*.net
+__pycache__
+
+# Build results
+submission*
+
+### Latex ###
+*.synctex.gz
+*.aux
+*.fls
+*.out
+*.toc
+*.log
+*.lof
+*.lot
+*.bbl
+*.bcf
+*.blg
+*.xmpi
+*.run.xml
+*.fdb_latexmk
+*.synctex*
+*.nav
+*.snm
+*.vrb
+*-blx.bib
