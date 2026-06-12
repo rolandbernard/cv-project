@@ -11,7 +11,11 @@ For evaluation purposes, the most important files are:
 
 ## Project Overview
 
+<!--TODO -->
+
 ### Project Structure
+
+<!--TODO -->
 
 ## Setup, Installation, Usage
 
