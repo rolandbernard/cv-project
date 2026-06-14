@@ -30,15 +30,28 @@ After detections and objects have been associated, it is still necessary to perf
 
 In Bayesian filtering is applied in two phases. First, the prediction step is used to model the target states distribution using only the past observations. Due to the conditional independence assumption of the hidden Markov model, this probability distribution of the hidden state can be computed as followed:
 \begin{align*}
-    p(x_t|z_{1:t-1}) &= \int p(x_t, x_{t-1} | z_{1:t-1}) dx_{t-1} \\
-    &= \int p(x_t | x_{t-1}, z_{1:t-1}) p(x_{t-1} | z_{1:t-1}) dx_{t-1} \\
-    &= \int p(x_t | x_{t-1}) p(x_{t-1} | z_{1:t-1}) dx_{t-1}
+    p(\mathbf{x}_t|\mathbf{z}_{1:t-1}) &= \int p(\mathbf{x}_t, \mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
+    &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}, \mathbf{z}_{1:t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
+    &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1}
 \end{align*}
-where $p(x_t | x_{t-1})$ defines out motion model, and $p(x_{t-1} | z_{1:t-1})$ is the posterior distribution after applying all previous observations. After prediction, we want to incorporate the information gained by the new observation. This can be achieved as follows by applying Bayes' rule:
+where $p(\mathbf{x}_t | \mathbf{x}_{t-1})$ defines out motion model, and $p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1})$ is the posterior distribution after applying all previous observations. After prediction, we want to incorporate the information gained by the new observation. This can be achieved as follows by applying Bayes' rule:
 \begin{align*}
-    p(x_t \mid z_{1:t}) &\propto p(z_t \mid x_t) p(x_t \mid z_{1:t-1})
+    p(\mathbf{x}_t \mid \mathbf{z}_{1:t}) &\propto p(\mathbf{z}_t \mid \mathbf{x}_t) p(\mathbf{x}_t \mid \mathbf{z}_{1:t-1})
 \end{align*}
-where $p(z_t \mid x_t)$ models the observation process.
+where $p(\mathbf{z}_t \mid \mathbf{x}_t)$ models the observation process.
+
+The equations of the Bayesian filtering algorithm can be implemented by representing the probability distributions as each time stem in parametric form, such as in Kalman filtering \parencite[p. 132-134]{Lanz2026Notes}, or in nonparametric form, such as with particle filters. In a linear Kalman filter the motion and observation models are defined as:
+\begin{align*}
+    \mathbf{x}_t &= \mathbf{F}_t \mathbf{x}_{t-1} + \mathbf{B}_t \mathbf{u}_t + \mathbf{w}_t, \quad \mathbf{w}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{Q}_t) \\
+    \mathbf{z}_t &= \mathbf{H}_t\mathbf{x}_t + \mathbf{v}_t, \quad \mathbf{v}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{R}_t)
+\end{align*}
+The optimal closed-form solution is the standard Kalman Filter, which updates the mean $\mathbf{\bar{x}}_t$ and covariance $\Sigma_t$ of $\mathbf{x}_t$ through linear projection and gain computation.
+
+While the linear Kalman filter is applicable in cases where both the motion and observation model are linear, in our application of multi-view tracking, the measurement model is non-linear because 3D world coordinates must project onto a 2D camera plane. For this reason, this project makes use of extended Kalman filtering. We define the observation function to be $\mathbf{z}_t = h(\mathbf{x}_t) + \mathbf{v}_t$. The extended Kalman filter linearizes this non-linear function using a first-order Taylor expansion around the predicted state estimate $\mathbf{\bar{x}}_t$:
+\begin{align*}
+h(\mathbf{x}_t) \approx h(\mathbf{\bar{x}}_t) + \mathbf{J}_h (\mathbf{x}_t - \mathbf{\bar{x}}_t)
+\end{align*}
+where $\mathbf{J}_h$ is the Jacobian matrix evaluated at $\mathbf{\bar{x}}_t$. In the update step the Jacobian matrix is the used in place of the linear observation matrix $\mathbf{H}_t$ to update the covariance and calculate Kalman gain.
 
 
 \subsection{Projective Geometry and Camera Calibration} \label{calibration}
