@@ -5,6 +5,7 @@ import random
 
 import torch
 import numpy as np
+import scipy.optimize
 
 # Slightly lower precision for performance.
 torch.set_float32_matmul_precision('high')
@@ -85,3 +86,76 @@ def load_tracks(file: str):
     """ Load recorded tracking data from the given file. """
     data = load_json(file)
     return data["cameras"], data["frames"], data["fps"], data["center"], data["up"]
+
+
+def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=0.15):
+    """ Computes MPJPE, MOTA, MOTP, Precision, and Recall from data. """
+    total_gt_kpts, total_pred_kpts = 0, 0
+    total_tp, total_fp, total_fn = 0, 0, 0
+    total_id_switches = 0
+    mpjpe_errors, mpjpe_count = 0, 0
+    motp_errors = 0
+    prev_gt_to_pred_map = {}
+    for idx in range(max(len(gt_frames), len(pred_frames))):
+        frame_gt = gt_frames[idx] if idx < len(gt_frames) else {}
+        frame_pred = pred_frames[idx] if idx < len(pred_frames) else {}
+        total_gt_kpts += len(frame_gt)
+        total_pred_kpts += len(frame_pred)
+        # Build cost matrix based on MPJPE distance.
+        cost_matrix = np.zeros((len(frame_gt), len(frame_pred)))
+        for i, gt in enumerate(frame_gt):
+            for j, pred in enumerate(frame_pred):
+                gt_joints = np.array(gt["kpts"])
+                valid = np.sum(np.abs(gt_joints), axis=1) != 0.0
+                pred_joints = np.array(pred["kpts"])
+                cost_matrix[i, j] = np.mean(
+                    np.linalg.norm(gt_joints - pred_joints, axis=1),
+                    where=valid
+                )
+        gt_ind, pred_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
+        current_gt_to_pred_map = {}
+        matches = 0
+        for g, p in zip(gt_ind, pred_ind):
+            mpjpe_errors += cost_matrix[g, p]
+            mpjpe_count += 1
+            # Apply gating threshold to only allow those with mean below threshold.
+            if cost_matrix[g, p] <= dist_threshold:
+                gt_id, pred_id = frame_gt[g]["id"], frame_pred[p]["id"]
+                current_gt_to_pred_map[gt_id] = pred_id
+                motp_errors += cost_matrix[g, p]
+                matches += 1
+                # Check for identity switch
+                if gt_id in prev_gt_to_pred_map and prev_gt_to_pred_map[gt_id] != pred_id:
+                    total_id_switches += 1
+        total_tp += matches
+        # Unmatched ground truth items are false negatives.
+        total_fn += len(frame_gt) - matches
+        # Unmatched predictions items are false positives.
+        total_fp += len(frame_pred) - matches
+        # Save assignment map for next iteration.
+        prev_gt_to_pred_map = current_gt_to_pred_map
+    # Compute metrics.
+    mota = 1.0 - ((total_fn + total_fp + total_id_switches) / total_gt_kpts) \
+        if total_gt_kpts > 0 else 0.0
+    motp = motp_errors / total_tp if total_tp > 0 else 0.0
+    mpjpe = mpjpe_errors / mpjpe_count if mpjpe_count > 0 else 0.0
+    precision = total_tp / (total_tp + total_fp) \
+        if (total_tp + total_fp) > 0 else 0.0
+    recall = total_tp / (total_tp + total_fn) \
+        if (total_tp + total_fn) > 0 else 0.0
+    # Output results as dictionary.
+    return {
+        "MPJPE": mpjpe,
+        "MOTA": mota,
+        "MOTP (Avg Miss Distance)": motp,
+        "Precision": precision,
+        "Recall": recall,
+        "Counts": {
+            "GT Objects": total_gt_kpts,
+            "Pred Objects": total_pred_kpts,
+            "True Positives": total_tp,
+            "False Positives": total_fp,
+            "False Negatives": total_fn,
+            "ID Switches": total_id_switches
+        }
+    }
