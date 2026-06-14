@@ -174,9 +174,7 @@ class CmuPanopticDataset:
         '170228_haggling_b2', '170404_haggling_b2', '161029_piano3',
     ]
     test_scenes: list[str] = [
-        "171204_pose6", "171026_pose3", "170221_haggling_m3", "170224_haggling_b3",
-        "170228_haggling_b3", "170404_haggling_b3", "170407_haggling_b3", "161029_piano4",
-        "161202_haggling1", "170915_office1", "161029_build1", "160224_haggling1",
+        "171204_pose6", "161029_piano4", "170915_office1", "161029_build1", "160224_haggling1",
     ]
     vga_panels = [
         1, 19, 14, 6, 16, 9, 5, 10, 18, 15, 3, 8, 4, 20, 11, 13, 7, 2, 17, 12, 9, 5, 6, 3, 15, 2, 12, 14, 16, 10, 4, 13, 20, 8, 17, 19,

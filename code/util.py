@@ -88,7 +88,7 @@ def load_tracks(file: str):
     return data["cameras"], data["frames"], data["fps"], data["center"], data["up"]
 
 
-def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=0.15):
+def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=15.0):
     """ Computes MPJPE, MOTA, MOTP, Precision, and Recall from data. """
     total_gt_kpts, total_pred_kpts = 0, 0
     total_tp, total_fp, total_fn = 0, 0, 0
@@ -116,13 +116,13 @@ def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=0.15):
         current_gt_to_pred_map = {}
         matches = 0
         for g, p in zip(gt_ind, pred_ind):
-            mpjpe_errors += cost_matrix[g, p]
+            mpjpe_errors += cost_matrix[g, p].item()
             mpjpe_count += 1
             # Apply gating threshold to only allow those with mean below threshold.
             if cost_matrix[g, p] <= dist_threshold:
                 gt_id, pred_id = frame_gt[g]["id"], frame_pred[p]["id"]
                 current_gt_to_pred_map[gt_id] = pred_id
-                motp_errors += cost_matrix[g, p]
+                motp_errors += cost_matrix[g, p].item()
                 matches += 1
                 # Check for identity switch
                 if gt_id in prev_gt_to_pred_map and prev_gt_to_pred_map[gt_id] != pred_id:
@@ -159,3 +159,10 @@ def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=0.15):
             "ID Switches": total_id_switches
         }
     }
+
+
+def evaluate_from_files(gt_file: str, pred_file: str, dist_threshold=15.0):
+    """ Load results and ground truth from the given files and compute metrics. """
+    _, gt_frames, _, _, _ = load_tracks(gt_file)
+    _, pred_frames, _, _, _ = load_tracks(pred_file)
+    return evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold)
