@@ -109,8 +109,11 @@ class Tracker:
         self.num_keypoint = num_keypoint
 
     def get_prediction(self) -> list[Track]:
-        """ Get the internal state prediction for the current step. """
-        return [copy.copy(track) for track in self.tracks]
+        """
+        Get the internal state prediction for the current step. This will only
+        return tracks that have a detection in the latest frame.
+        """
+        return [copy.copy(track) for track in self.tracks if track.last_detection == 0]
 
     def predict(self, dt: float):
         """

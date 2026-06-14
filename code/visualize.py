@@ -16,10 +16,14 @@ class SkeletonPlayer:
     developed tracking system in a 3d visualization.
     """
 
-    def __init__(self, cameras: list, frames: list, fps: float, center=(0, 0, 0), up=(0, 1, 0)):
+    def __init__(
+        self, cameras: list, frames: list, fps: float, center=(0, 0, 0),
+        up=(0, 1, 0), gt_frames: None | list = None
+    ):
         self.scale = self.approx_scale(cameras)
         self.fps = fps
         self.frames = frames
+        self.gt_frames = gt_frames
         self.current_frame = 0
         self.is_playing = False
         self.track_meshes = {}
@@ -96,19 +100,28 @@ class SkeletonPlayer:
             self.pl.add_mesh(
                 pv.Sphere(radius=z_cam * 0.1, center=camera_center), color="red")
 
-    def get_or_create_track(self, track_id):
-        if track_id not in self.track_meshes:
+    def get_or_create_track(self, track_id, gt=False):
+        track_key = (gt, track_id)
+        if track_key not in self.track_meshes:
             mesh = pv.PolyData()
-            color = util.COLORS[track_id % len(util.COLORS)]
-            actor = self.pl.add_mesh(
-                mesh, color=color,
-                render_lines_as_tubes=True, line_width=8,
-                render_points_as_spheres=True, point_size=15,
-                smooth_shading=True
-            )
-            self.track_meshes[track_id] = mesh
-            self.track_actors[track_id] = actor
-        return self.track_meshes[track_id], self.track_actors[track_id]
+            if gt:
+                actor = self.pl.add_mesh(
+                    mesh, color="red",
+                    render_lines_as_tubes=True, line_width=2,
+                    render_points_as_spheres=True, point_size=2,
+                    smooth_shading=True
+                )
+            else:
+                color = util.COLORS[track_id % len(util.COLORS)]
+                actor = self.pl.add_mesh(
+                    mesh, color=color,
+                    render_lines_as_tubes=True, line_width=8,
+                    render_points_as_spheres=True, point_size=15,
+                    smooth_shading=True
+                )
+            self.track_meshes[track_key] = mesh
+            self.track_actors[track_key] = actor
+        return self.track_meshes[track_key], self.track_actors[track_key]
 
     def update_scene(self, value):
         frame_idx = int(np.round(value))
@@ -125,6 +138,14 @@ class SkeletonPlayer:
             mesh, actor = self.get_or_create_track(track["id"])
             mesh.copy_from(new_mesh)
             actor.SetVisibility(True)
+        # Create also ground truth tracks if available.
+        if self.gt_frames and self.current_frame < len(self.gt_frames):
+            for track in self.gt_frames[self.current_frame]:
+                new_mesh = pv.PolyData(np.array(track["kpts"]))
+                new_mesh.lines = self.skeleton
+                mesh, actor = self.get_or_create_track(track["id"], True)
+                mesh.copy_from(new_mesh)
+                actor.SetVisibility(True)
 
     def toggle_play(self):
         self.is_playing = not self.is_playing
@@ -164,11 +185,17 @@ class SkeletonPlayer:
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
-        print(f"usage: python {sys.argv[0]} FILENAME", file=sys.stderr)
+        print(f"usage: python {sys.argv[0]} FILENAME [GT_FILENAME]")
         exit(1)
     if not os.path.isfile(sys.argv[1]):
-        print(f"unable to open file '{sys.argv[1]}'", file=sys.stderr)
+        print(f"unable to open tracking file '{sys.argv[1]}'")
         exit(1)
     cams, frames, fps, center, up = util.load_tracks(sys.argv[1])
-    player = SkeletonPlayer(cams, frames, fps, center, up)
+    gt_frames = None
+    if len(sys.argv) > 2:
+        if not os.path.isfile(sys.argv[2]):
+            print(f"unable to open ground truth file '{sys.argv[2]}'")
+            exit(1)
+        _, gt_frames, _, _, _ = util.load_tracks(sys.argv[2])
+    player = SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
     player.show()

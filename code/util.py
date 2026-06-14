@@ -1,7 +1,6 @@
 
 import json
 import random
-from typing import Any
 
 import torch
 import numpy as np
@@ -57,7 +56,7 @@ def to_list(something) -> list:
 
 
 def save_tracks(
-    file: str, cams: list[Any], frames: list[list[Any]], fps: float,
+    file: str, cams: list, frames: list[list], fps: float,
     center: tuple[float, float, float] = (0, 0, 0), up: tuple[float, float, float] = (0, -1, 0)
 ):
     """ Save recorded tracking data to the given file. """

@@ -287,3 +287,36 @@ class CmuPanopticDataset:
             streams.append(f"{self.path}/{scene}/vga_{name}.mp4")
             cameras.append(self.load_cam(calib, name))
         return source.OfflineVideoSource(streams, cameras)
+
+    def load_ground_truth_vga(self, scene: str, num_vga_cams: int = 4) -> tuple[list[Camera], list[list], float]:
+        """
+        Load the ground truth data in the same format as produced in the evaluation
+        application of the tracking system. This can be used to perform evaluation.
+        For visualization purposes it also generates the first few camera positions.
+        """
+        with open(f"{self.path}/{scene}/calibration.json") as f:
+            calib = json.load(f)
+        cameras = []
+        for i in range(num_vga_cams):
+            name = f"{self.vga_panels[i]:02d}_{self.vga_nodes[i]:02d}"
+            cameras.append(self.load_cam(calib, name))
+        ann_path = f"{self.path}/{scene}/vgaPose3d_stage1_coco19"
+        files = sorted(f for f in os.listdir(ann_path))
+        first_idx, last_idx = int(files[0][12:-5]), int(files[-1][12:-5])
+        assert len(files) == last_idx - first_idx + 1
+        frames = [[]] * first_idx
+        for file in files:
+            with open(f"{ann_path}/{file}") as f:
+                ann = json.load(f)
+                frames.append([
+                    {
+                        "id": b["id"],
+                        "kpts": torch.tensor(b["joints19"])
+                        .view(19, 4)[self.coco17_indices, :3]
+                        .tolist(),
+                        "conf": torch.tensor(b["joints19"])
+                        .view(19, 4)[self.coco17_indices, 3]
+                        .tolist(),
+                    } for b in ann["bodies"]
+                ])
+        return cameras, frames, self.vga_fps
