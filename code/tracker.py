@@ -192,12 +192,12 @@ class Tracker:
                     kpt_1 = detections[past_c][0][past_d]
                     cov_1 = detections[past_c][1][past_d]
                     m_cams.append(cams[past_c])
-                    m_cams.append(kpt_1.expand(num_detect, num_dim))
-                    m_cams.append(cov_1.expand(num_detect, num_dim, num_dim))
+                    m_kpts.append(kpt_1.expand(num_detect, num_dim))
+                    m_covs.append(cov_1.expand(num_detect, num_dim, num_dim))
                 # Triangulate using all camera views at once.
                 mean3d = camera.triangulate_undistorted(
                     m_cams,
-                    [m.view(num_detect, num_dim, 2) for m in m_kpts],
+                    [m.view(num_detect, -1, 2) for m in m_kpts],
                     [per_point_cov(c, 2) for c in m_covs]
                 )
                 # Compute cost for reprojection into new camera view.
