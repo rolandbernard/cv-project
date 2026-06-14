@@ -180,7 +180,17 @@ class SkeletonPlayer:
 
     def show(self):
         """ Show the plotter by opening the window. """
+        pv.set_jupyter_backend('client')
         self.pl.show()
+
+
+def load_from_files(main_file: str, gt_file: None | str = None) -> SkeletonPlayer:
+    """ Load results and optional ground truth from the given files. """
+    cams, frames, fps, center, up = util.load_tracks(main_file)
+    gt_frames = None
+    if gt_file is not None:
+        _, gt_frames, _, _, _ = util.load_tracks(gt_file)
+    return SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
 
 
 if __name__ == "__main__":
