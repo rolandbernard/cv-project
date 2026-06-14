@@ -269,21 +269,21 @@ class CmuPanopticDataset:
             distortion=torch.tensor(cam_calib["distCoef"]),
         )
 
-    def get_source(self, name: str, num_hd_cams: int = 0, num_vga_cams: int = 4) -> source.VideoSource:
+    def get_source(self, scene: str, num_hd_cams: int = 0, num_vga_cams: int = 4) -> source.OfflineVideoSource:
         """
         Load one of the scenes from the dataset into a video source for further
         processing. The name should be one of the ones in `CmuPanopticDataset.scenes`.
         """
-        with open(f"{self.path}/{name}/calibration.json") as f:
+        with open(f"{self.path}/{scene}/calibration.json") as f:
             calib = json.load(f)
         streams = []
         cameras = []
         for i in range(num_hd_cams):
             name = f"00_{i:02d}"
-            streams.append(f"{self.path}/{name}/hd_{name}.mp4")
+            streams.append(f"{self.path}/{scene}/hd_{name}.mp4")
             cameras.append(self.load_cam(calib, name))
         for i in range(num_vga_cams):
             name = f"{self.vga_panels[i]:02d}_{self.vga_nodes[i]:02d}"
-            streams.append(f"{self.path}/{name}/vga_{name}.mp4")
+            streams.append(f"{self.path}/{scene}/vga_{name}.mp4")
             cameras.append(self.load_cam(calib, name))
         return source.OfflineVideoSource(streams, cameras)

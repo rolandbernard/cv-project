@@ -17,6 +17,7 @@ class SkeletonPlayer:
     """
 
     def __init__(self, cameras: list, frames: list, fps: float, center=(0, 0, 0), up=(0, 1, 0)):
+        self.scale = self.approx_scale(cameras)
         self.fps = fps
         self.frames = frames
         self.current_frame = 0
@@ -39,14 +40,27 @@ class SkeletonPlayer:
         self.setup_widgets()
         self.update_scene(0)
 
+    def approx_scale(self, cameras):
+        max_dist = 1e-5
+        for cam0 in cameras:
+            for cam1 in cameras:
+                center0 = - \
+                    np.array(cam0["R"]).T @ np.array(cam0["t"]).flatten()
+                center1 = - \
+                    np.array(cam1["R"]).T @ np.array(cam1["t"]).flatten()
+                dist = np.linalg.norm(center0 - center1).item()
+                if dist > max_dist:
+                    max_dist = dist
+        return max_dist
+
     def setup_ground(self, center: tuple[float, float, float], up: tuple[float, float, float]):
         ground = pv.Plane(
-            center=center, direction=up, i_size=10,
-            j_size=10, i_resolution=20, j_resolution=20
+            center=center, direction=up, i_size=self.scale,
+            j_size=self.scale, i_resolution=20, j_resolution=20
         )
         self.pl.add_mesh(ground, style="wireframe", color="lightgray")
 
-    def setup_cameras(self, cameras: list, scale=0.5):
+    def setup_cameras(self, cameras: list, scale=0.05):
         for cam in cameras:
             rotation = np.array(cam["R"])
             translate = np.array(cam["t"]).flatten()
@@ -55,7 +69,7 @@ class SkeletonPlayer:
             fx, fy = intrinsics[0, 0], intrinsics[1, 1]
             cx, cy = intrinsics[0, 2], intrinsics[1, 2]
             width, height = cx * 2, cy * 2
-            z_cam = scale
+            z_cam = self.scale * scale
             x0 = (0 - cx) * z_cam / fx
             x1 = (width - cx) * z_cam / fx
             y0 = (0 - cy) * z_cam / fy
@@ -73,7 +87,7 @@ class SkeletonPlayer:
             camera_wireframe = pv.PolyData(vertices, lines=lines)
             self.pl.add_mesh(camera_wireframe, color="black", line_width=2)
             self.pl.add_mesh(
-                pv.Sphere(radius=scale * 0.05, center=camera_center), color="red")
+                pv.Sphere(radius=scale * 0.1, center=camera_center), color="red")
 
     def get_or_create_track(self, track_id):
         if track_id not in self.track_meshes:
@@ -131,7 +145,7 @@ class SkeletonPlayer:
             interaction_event="always"
         )
         self.pl.add_timer_event(
-            max_steps=1000000, duration=1000/self.fps, callback=self.timer_callback)
+            max_steps=1000000, duration=round(1000/self.fps), callback=self.timer_callback)
         self.pl.add_key_event("space", self.toggle_play)
         self.pl.add_key_event("Right", self.next_frame)
         self.pl.add_key_event("Left", self.prev_frame)
@@ -142,8 +156,11 @@ class SkeletonPlayer:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) <= 1 or not os.path.isfile(sys.argv[1]):
-        print("", file=sys.stderr)
+    if len(sys.argv) <= 1:
+        print(f"usage: python {sys.argv[0]} FILENAME", file=sys.stderr)
+        exit(1)
+    if not os.path.isfile(sys.argv[1]):
+        print(f"unable to open file '{sys.argv[1]}'", file=sys.stderr)
         exit(1)
     cams, frames, fps, center, up = util.load_tracks(sys.argv[1])
     player = SkeletonPlayer(cams, frames, fps, center, up)

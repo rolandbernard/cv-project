@@ -6,9 +6,8 @@ from typing import Any
 import torch
 import numpy as np
 
-from camera import Camera
-from tracker import Track
-
+# Slightly lower precision for performance.
+torch.set_float32_matmul_precision('high')
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # The set of links between keypoints that make up the skeleton in the COCO pose model.
@@ -49,14 +48,22 @@ def count_model_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def to_list(something) -> list:
+    if isinstance(something, np.ndarray) or isinstance(something, torch.Tensor):
+        return something.tolist()
+    if isinstance(something, list):
+        return [to_list(s) for s in something]
+    return something
+
+
 def save_tracks(
-    file: str, cams: list[Camera | Any], frames: list[list[Track | Any]], fps: float,
+    file: str, cams: list[Any], frames: list[list[Any]], fps: float,
     center: tuple[float, float, float] = (0, 0, 0), up: tuple[float, float, float] = (0, 1, 0)
 ):
     """ Save recorded tracking data to the given file. """
     data = {
-        "cameras": [{k: c[k] for k in ["R", "t", "K"]} for c in cams],
-        "frames": [[{k: t[k] for k in ["id", "kpts"]} for t in f] for f in frames],
+        "cameras": [{k: to_list(c[k]) for k in ["R", "t", "K"]} for c in cams],
+        "frames": [[{k: to_list(t[k]) for k in ["id", "kpts"]} for t in f] for f in frames],
         "fps": fps, "center": list(center), "up": list(up)
     }
     with open(file, "w") as f:

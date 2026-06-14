@@ -1,5 +1,6 @@
 
 import copy
+from itertools import count
 
 import torch
 import scipy.optimize
@@ -73,7 +74,7 @@ class Track:
         if key == "id":
             return self.id
         if key == "kpts":
-            return self.get_keypoints()
+            return self.get_keypoints().tolist()
         raise KeyError
 
 
@@ -306,7 +307,7 @@ class Tracker:
                 new_tracks.append(track)
         self.tracks = new_tracks
 
-    def evaluate(self, source: source.VideoSource) -> tuple[list[Camera], list[list[Track]], float]:
+    def evaluate(self, source: source.VideoSource, progress=100) -> tuple[list[Camera], list[list[Track]], float]:
         """
         Run the complete evaluation loop using the given video source and return
         as a result the camera positions, tracks in each frame, and fps. This will
@@ -314,13 +315,23 @@ class Tracker:
         """
         last_cams, frames = [], []
         last_ts = 0
-        while True:
-            ts, imgs, cams = source.next_frames()
-            if ts is None or cams is None or imgs is None:
-                break
-            dt = ts - last_ts
-            self.predict(dt)
-            self.update(cams, imgs)
-            frames.append(self.get_prediction())
-            last_ts, last_cams = ts, cams
+        try:
+            source.start()
+            for i in count(1):
+                ts, imgs, cams = source.next_frames()
+                if ts is None or cams is None or imgs is None:
+                    break
+                dt = ts - last_ts
+                self.predict(dt)
+                self.update(cams, imgs)
+                frames.append(self.get_prediction())
+                last_ts, last_cams = ts, cams
+                if progress != 0 and i % progress == 0:
+                    print(f"finished frame {i}")
+        except KeyboardInterrupt:
+            # We want to stop, but let's still return the results so the time
+            # was not wasted. (Allows for early stop.)
+            pass
+        finally:
+            source.release()
         return last_cams, frames, 1/dt

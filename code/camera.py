@@ -243,11 +243,11 @@ class Camera:
 
     def __getitem__(self, key: str):
         if key == "R":
-            return self.rotation
+            return self.rotation.tolist()
         if key == "t":
-            return self.translation
+            return self.translation.tolist()
         if key == "K":
-            return self.intrinsic
+            return self.intrinsic.tolist()
         raise KeyError
 
 
