@@ -105,7 +105,7 @@ To set up and run this project, follow these steps after downloading the project
     pip install numpy pandas scipy pillow opencv-python opencv-contrib-python torch torchvision ultralytics matplotlib seaborn pyvista[jupyter] jupyter ipywidgets gdown einops
     ```
 3. **Download the Dataset:**
-    To download the dataset, and install missing dependencies (if not done in the previous step), simply run all cells in the `0.setup.py` notebook. It will automatically download the dataset and extract it into the `code/data` directory.
+    To download the dataset, and install missing dependencies (if not done in the previous step), simply run all cells in the `0.setup.ipynb` notebook. It will automatically download the dataset and extract it into the `code/data` directory.
 
 ### Usage
 
