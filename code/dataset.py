@@ -2,15 +2,12 @@
 import os
 import io
 import json
-import random
 import zipfile
 import tarfile
 import urllib.request
-from itertools import count
 
 import gdown
 import torch
-from torch.utils.data import Dataset
 
 import source
 from camera import Camera

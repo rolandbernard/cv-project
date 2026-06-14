@@ -1,18 +1,9 @@
 
-import os
-
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 from ultralytics import YOLO
 from ultralytics.nn.tasks import PoseModel
-from ultralytics.nn.modules import Detect, Pose26, Conv
-import scipy.optimize
 
-import util
-import dataset
 from camera import Camera
-from util import NetStorage
 
 
 class PoseDetector:
@@ -100,4 +91,3 @@ class PoseDetector:
         """
         self.model = self.model.to(*args, **kargs)
         return self
-

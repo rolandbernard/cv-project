@@ -155,7 +155,8 @@ class Tracker:
             total_cov = covs[j] + pred_covar
             dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
             _, logdet = torch.linalg.slogdet(total_cov)
-            cost_matrix[:num_track, j] = dist + logdet - num_dim*self.match_threshold
+            cost_matrix[:num_track, j] = dist + \
+                logdet - num_dim*self.match_threshold
         # Run Hungarian matching.
         cost_np = cost_matrix.cpu().numpy()
         row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_np)

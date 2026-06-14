@@ -3,10 +3,16 @@
 !.gitignore
 /data
 /nets/*.net
+*.pt
+*.jpg
 __pycache__
+venv
+!.env.example
 
 # Build results
 submission*
+*.mp4
+*.avi
 
 ### Latex ###
 *.synctex.gz
