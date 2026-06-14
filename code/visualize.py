@@ -39,6 +39,13 @@ class SkeletonPlayer:
         self.setup_cameras(cameras)
         self.setup_widgets()
         self.update_scene(0)
+        # Set initial camera position.
+        self.pl.camera_position = [
+            (center[0] + (2 if up[0] >= 0 else -2)*self.scale,
+             center[1] + (2 if up[1] >= 0 else -2)*self.scale,
+             center[2] + (2 if up[2] >= 0 else -2)*self.scale),
+            center, up
+        ]
 
     def approx_scale(self, cameras):
         max_dist = 1e-5
