@@ -72,6 +72,11 @@ class Track:
         """
         return per_point_cov(self.get_full_covariances())
 
+    def __getitem__(self, key: str):
+        if key == "kpts":
+            return self.get_keypoints()
+        raise KeyError
+
 
 def per_point_cov(covar: torch.Tensor, num_dim: int = 3) -> torch.Tensor:
     *Bs, N, N = covar.shape

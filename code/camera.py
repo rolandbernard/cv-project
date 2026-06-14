@@ -241,6 +241,15 @@ class Camera:
         self.distortion = self.distortion.to(*args, **kargs)
         return self
 
+    def __getitem__(self, key: str):
+        if key == "R":
+            return self.rotation
+        if key == "t":
+            return self.translation
+        if key == "K":
+            return self.intrinsic
+        raise KeyError
+
 
 def inv_sqrt_sym(matrix: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
     """
