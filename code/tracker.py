@@ -110,7 +110,7 @@ class Tracker:
 
     def get_prediction(self) -> list[Track]:
         """ Get the internal state prediction for the current step. """
-        return [copy.copy(track) for track in self.tracks if track.num_detection >= self.min_age]
+        return [copy.copy(track) for track in self.tracks]
 
     def predict(self, dt: float):
         """
@@ -158,71 +158,81 @@ class Tracker:
                 - num_dim*self.mo_threshold
         # Run Hungarian matching.
         cost_np = cost_matrix.cpu().numpy()
-        row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_np)
+        row_idx, col_idx = scipy.optimize.linear_sum_assignment(cost_np)
         # Filter out matches that matched with dummies.
-        tr_idx = torch.tensor(row_ind, dtype=torch.long, device=kpts.device)
-        det_idx = torch.tensor(col_ind, dtype=torch.long, device=kpts.device)
+        tr_idx = torch.tensor(row_idx, dtype=torch.long, device=kpts.device)
+        det_idx = torch.tensor(col_idx, dtype=torch.long, device=kpts.device)
         valid_mask = tr_idx < num_track
         return tr_idx[valid_mask], det_idx[valid_mask]
 
     def associate_detections(self, cams: list[Camera], detections: list[tuple[torch.Tensor, torch.Tensor]]) -> list[torch.Tensor]:
         """
-        Associate the given detections to one of the existing tracks. At most
-        one detection in associated to each track. Returns tensors with index
-        into the given detections array.
+        Associate the given detections between cameras. This will not compare
+        against existing tracks, instead only matching between different camera
+        views. Uses iterative greedy matching.
         """
         num_cams = len(cams)
         active_tracks = []
         for c_idx, (kpts, covs) in enumerate(detections):
-            num_detect = kpts.shape[0]
+            num_detect, num_dim = kpts.shape
             num_track = len(active_tracks)
             if num_track == 0 or num_detect == 0:
-                # If no tracks exists yet, populate with first cameras detection.
+                # Initialize since we don't have any active tracks to match yet.
                 for i in range(num_detect):
                     active_tracks.append({c_idx: i})
                 continue
             # Build cost matrix.
-            cost_matrix = torch.zeros((num_track + num_detect, num_detect))
+            cost_matrix = torch.zeros(
+                (num_track + num_detect, num_detect), device=kpts.device)
+            cam_2 = cams[c_idx]
             for t_idx, track in enumerate(active_tracks):
-                for d_idx in range(num_detect):
-                    # Distance between a track and a detection is the mean
-                    # reprojection error to the track's detections.
-                    total_dist = 0.0
-                    for past_c, past_d in track.items():
-                        m_cams = [cams[past_c], cams[c_idx]]
-                        m_kpts = [detections[past_c][0][past_d], kpts[d_idx]]
-                        m_covs = [detections[past_c][1][past_d], covs[d_idx]]
-                        mean3d = camera.triangulate_undistorted(
-                            m_cams,
-                            [m.view(-1, 2) for m in m_kpts],
-                            [per_point_cov(c, 2) for c in m_covs]
-                        )
-                        diff1 = m_kpts[0] \
-                            - m_cams[0].project_pinhole(mean3d).flatten()
-                        diff2 = m_kpts[1] \
-                            - m_cams[1].project_pinhole(mean3d).flatten()
-                        dist1 = torch.dot(
-                            diff1, torch.linalg.solve(m_covs[0], diff1))
-                        dist2 = torch.dot(
-                            diff2, torch.linalg.solve(m_covs[1], diff2))
-                        total_dist += (dist1 + dist2).item()
-                    cost_matrix[t_idx, d_idx] = total_dist / len(track) - 24
+                # Collect all camera views and points for this track.
+                m_cams, m_kpts, m_covs = [cam_2], [kpts], [covs]
+                for past_c, past_d in track.items():
+                    kpt_1 = detections[past_c][0][past_d]
+                    cov_1 = detections[past_c][1][past_d]
+                    m_cams.append(cams[past_c])
+                    m_cams.append(kpt_1.expand(num_detect, num_dim))
+                    m_cams.append(cov_1.expand(num_detect, num_dim, num_dim))
+                # Triangulate using all camera views at once.
+                mean3d = camera.triangulate_undistorted(
+                    m_cams,
+                    [m.view(num_detect, num_dim, 2) for m in m_kpts],
+                    [per_point_cov(c, 2) for c in m_covs]
+                )
+                # Compute cost for reprojection into new camera view.
+                pred_2 = cam_2.project_pinhole(mean3d) \
+                    .view(num_detect, num_dim)
+                diff2 = (kpts - pred_2).unsqueeze(-1)
+                dist2 = (diff2.mT @ torch.linalg.solve(covs, diff2)).flatten()
+                _, logdet_2 = torch.linalg.slogdet(covs)
+                cost_sum = dist2 + logdet_2
+                # Compute cost for reprojection into all prev camera view.
+                for past_c, past_d in track.items():
+                    kpt_1 = detections[past_c][0][past_d]
+                    cov_1 = detections[past_c][1][past_d]
+                    pred_1 = cams[past_c].project_pinhole(mean3d)\
+                        .view(num_detect, num_dim)
+                    diff1 = (kpt_1.expand(num_detect, num_dim) - pred_1) \
+                        .unsqueeze(-1)
+                    dist1 = (diff1.mT @ torch.linalg.solve(cov_1, diff1)) \
+                        .flatten()
+                    _, logdet_1 = torch.linalg.slogdet(cov_1)
+                    cost_sum += dist1 + logdet_1
+                # Average cost over all reprojections.
+                avg_cost = (cost_sum / (len(track) + 1)) \
+                    - (num_dim * self.mn_threshold)
+                cost_matrix[t_idx, :] = avg_cost
             # Run Hungarian matching.
             cost_np = cost_matrix.cpu().numpy()
-            row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_np)
-            # Filter out matches that matched with dummies.
-            valid_mask = row_ind < num_track
-            tr_idx = row_ind[valid_mask]
-            det_idx = col_ind[valid_mask]
-            # Assign each matched detection to a track.
-            for t_idx, d_det in zip(tr_idx, det_idx):
-                active_tracks[t_idx][c_idx] = d_det
-            # Assign unmatched detections to new tracks.
-            matched_d = set(det_idx)
-            for d_idx in range(num_detect):
-                if d_idx not in matched_d:
-                    active_tracks.append({c_idx: d_idx})
-        # Format the dictionaries into the tuple structure expected by your update() loop
+            tr_idx, det_idx = scipy.optimize.linear_sum_assignment(cost_np)
+            # Assign detections to active tracks and create new tracks.
+            for t, d in zip(tr_idx, det_idx):
+                if t < num_track:
+                    active_tracks[t][c_idx] = d
+                else:
+                    active_tracks.append({c_idx: d})
+        # Format results as expected.
         matched_results = []
         for c_idx in range(num_cams):
             matched_results.append(torch.tensor([
@@ -316,18 +326,19 @@ class Tracker:
         last_cams, frames = [], []
         last_ts = 0
         try:
-            source.start()
-            for i in count(1):
-                ts, imgs, cams = source.next_frames()
-                if ts is None or cams is None or imgs is None:
-                    break
-                dt = ts - last_ts
-                self.predict(dt)
-                self.update(cams, imgs)
-                frames.append(self.get_prediction())
-                last_ts, last_cams = ts, cams
-                if progress != 0 and i % progress == 0:
-                    print(f"finished frame {i}")
+            with torch.inference_mode():
+                source.start()
+                for i in count(1):
+                    ts, imgs, cams = source.next_frames()
+                    if ts is None or cams is None or imgs is None:
+                        break
+                    dt = ts - last_ts
+                    self.predict(dt)
+                    self.update(cams, imgs)
+                    frames.append(self.get_prediction())
+                    last_ts, last_cams = ts, cams
+                    if progress != 0 and i % progress == 0:
+                        print(f"finished frame {i}")
         except KeyboardInterrupt:
             # We want to stop, but let's still return the results so the time
             # was not wasted. (Allows for early stop.)
@@ -335,3 +346,23 @@ class Tracker:
         finally:
             source.release()
         return last_cams, frames, 1/dt
+
+
+def build_physics(scale=100.0) -> LinearPhysics:
+    """
+    Build some standard physics based on the given scale. The scale must be
+    relative to meters, i.e., `scale=100` means centimeter units.
+    """
+    dyn_mat = torch.concat([
+        torch.concat([torch.zeros(17*3, 17*3), torch.eye(3*17)], dim=1),
+        torch.concat([torch.zeros(17*3, 17*3), torch.eye(3*17)*-0.5], dim=1)
+    ], dim=0)
+    dyn_cov = torch.diag(torch.tensor(
+        [(0.05 * scale)**2]*3*17 + [(2.0 * scale)**2]*3*17
+    ))
+    init_mean = torch.zeros(17*3 + 17*3)
+    init_cov = torch.diag(torch.concat([
+        torch.full((17*3,), (1.0 * scale)**2),
+        torch.full((17*3,), (5.0 * scale)**2),
+    ]))
+    return LinearPhysics(dyn_mat, dyn_cov, init_mean, init_cov)

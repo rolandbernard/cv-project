@@ -87,7 +87,7 @@ class SkeletonPlayer:
             camera_wireframe = pv.PolyData(vertices, lines=lines)
             self.pl.add_mesh(camera_wireframe, color="black", line_width=2)
             self.pl.add_mesh(
-                pv.Sphere(radius=scale * 0.1, center=camera_center), color="red")
+                pv.Sphere(radius=z_cam * 0.1, center=camera_center), color="red")
 
     def get_or_create_track(self, track_id):
         if track_id not in self.track_meshes:
