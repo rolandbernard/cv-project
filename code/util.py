@@ -1,8 +1,13 @@
 
+import json
 import random
+from typing import Any
 
 import torch
 import numpy as np
+
+from camera import Camera
+from tracker import Track
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -30,9 +35,7 @@ def set_seed(seed=42):
 
 
 def remove_idx(input: torch.Tensor, idx: torch.Tensor, dim=0) -> torch.Tensor:
-    """
-    Remove all indices in `idx` from the input tensor at dimension `dim`.
-    """
+    """ Remove all indices in `idx` from the input tensor at dimension `dim`. """
     mask = torch.ones(input.shape[dim], dtype=torch.bool, device=input.device)
     mask[idx] = False
     return torch.index_select(input, dim, torch.nonzero(mask).squeeze())
@@ -44,3 +47,24 @@ def count_model_params(model):
     parameters of the given model.
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def save_tracks(
+    file: str, cams: list[Camera | Any], frames: list[list[Track | Any]], fps: float,
+    center: tuple[float, float, float] = (0, 0, 0), up: tuple[float, float, float] = (0, 1, 0)
+):
+    """ Save recorded tracking data to the given file. """
+    data = {
+        "cameras": [{k: c[k] for k in ["R", "t", "K"]} for c in cams],
+        "frames": [[{k: t[k] for k in ["id", "kpts"]} for t in f] for f in frames],
+        "fps": fps, "center": list(center), "up": list(up)
+    }
+    with open(file, "w") as f:
+        json.dump(data, f)
+
+
+def load_tracks(file: str):
+    """ Load recorded tracking data from the given file. """
+    with open(file, "r") as f:
+        data = json.load(f)
+    return data["cameras"], data["frames"], data["fps"], data["center"], data["up"]

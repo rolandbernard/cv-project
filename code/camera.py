@@ -49,7 +49,7 @@ class Camera:
         >>> cam.load_ini(temp_path)
         >>> os.remove(temp_path)
         >>> cam.translation
-        tensor([1., 2., 3.])
+        tensor([-1., -2., -3.])
         >>> cam.intrinsic[0, 2].item()
         320.0
         """
@@ -115,7 +115,7 @@ class Camera:
         This computes normalized camera coordinates and does not take into acount
         camera intrinsics or distortion.
 
-        >>> cam = Camera(translation=torch.tensor([0.0, 0.0, -1.0]))
+        >>> cam = Camera(translation=torch.tensor([0.0, 0.0, 1.0]))
         >>> pts = torch.tensor([1.0, 1.0, 1.0])
         >>> cam.project_pinhole(pts).tolist()
         [0.5, 0.5]
@@ -252,9 +252,7 @@ class Camera:
 
 
 def inv_sqrt_sym(matrix: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-    """
-    Compute the inverse square-root of the given batch of matrices.
-    """
+    """ Compute the inverse square-root of the given batch of matrices. """
     diag, vecs = torch.linalg.eigh(matrix)
     inv_sqrt = 1.0 / (torch.sqrt(diag) + eps)
     return vecs @ torch.diag_embed(inv_sqrt) @ vecs.mT
@@ -265,8 +263,8 @@ def triangulate_undistorted(cams: list[Camera], points: list[torch.Tensor], cova
     Triangulate multiple points using multiple camera views. This is similar
     to `triangulate`, but the points must have be undistorted beforehand.
 
-    >>> cam1 = Camera(translation=torch.tensor([-0.9, 0.0, 0.0]))
-    >>> cam2 = Camera(translation=torch.tensor([1.1, 0.0, 0.0]))
+    >>> cam1 = Camera(translation=torch.tensor([0.9, 0.0, 0.0]))
+    >>> cam2 = Camera(translation=torch.tensor([-1.1, 0.0, 0.0]))
     >>> p1 = torch.tensor([1.0, 0.1])
     >>> p2 = torch.tensor([-1.0, 0.1])
     >>> res = triangulate_undistorted([cam1, cam2], [p1, p2])
@@ -299,8 +297,8 @@ def triangulate(cams: list[Camera], points: list[torch.Tensor]) -> torch.Tensor:
     number of batch dimensions in front. The output will have the same batch
     dimensions but a final dimension of size 3.
 
-    >>> cam1 = Camera(translation=torch.tensor([-1.1, 0.0, 0.0]))
-    >>> cam2 = Camera(translation=torch.tensor([0.9, 0.0, 0.0]))
+    >>> cam1 = Camera(translation=torch.tensor([1.1, 0.0, 0.0]))
+    >>> cam2 = Camera(translation=torch.tensor([-0.9, 0.0, 0.0]))
     >>> p1 = torch.tensor([1.0, -0.1])
     >>> p2 = torch.tensor([-1.0, -0.1])
     >>> res = triangulate([cam1, cam2], [p1, p2])

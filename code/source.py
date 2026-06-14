@@ -85,9 +85,7 @@ class OfflineVideoSource(VideoSource):
         return timestamp, frames, self.cameras
 
     def to(self, *args, **kargs):
-        """
-        Apply the PyTorch `.to` method to all contained cameras.
-        """
+        """ Apply the PyTorch `.to` method to all contained cameras. """
         self.cameras = [cam.to(*args, **kargs) for cam in self.cameras]
         return self
 
@@ -180,8 +178,6 @@ class OnlineVideoSource(VideoSource):
         return float(np.median(timestamps)), frames, self.cameras
 
     def to(self, *args, **kargs):
-        """
-        Apply the PyTorch `.to` method to all contained cameras.
-        """
+        """ Apply the PyTorch `.to` method to all contained cameras. """
         self.cameras = [cam.to(*args, **kargs) for cam in self.cameras]
         return self

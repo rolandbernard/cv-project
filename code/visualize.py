@@ -1,4 +1,7 @@
 
+import os
+import sys
+
 from typing import Any
 
 import pyvista as pv
@@ -98,7 +101,7 @@ class SkeletonPlayer:
         for track in self.frames[self.current_frame]:
             new_mesh = pv.PolyData(np.array(track["kpts"]))
             new_mesh.lines = self.skeleton
-            mesh, actor = self.get_or_create_track(track.id)
+            mesh, actor = self.get_or_create_track(track["id"])
             mesh.copy_from(new_mesh)
             actor.SetVisibility(True)
 
@@ -134,7 +137,14 @@ class SkeletonPlayer:
         self.pl.add_key_event("Left", self.prev_frame)
 
     def show(self):
-        """
-        Show the plotter by opening the window.
-        """
+        """ Show the plotter by opening the window. """
         self.pl.show()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) <= 1 or not os.path.isfile(sys.argv[1]):
+        print("", file=sys.stderr)
+        exit(1)
+    cams, frames, fps, center, up = util.load_tracks(sys.argv[1])
+    player = SkeletonPlayer(cams, frames, fps, center, up)
+    player.show()

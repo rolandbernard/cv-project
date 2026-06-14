@@ -86,8 +86,6 @@ class PoseDetector:
         ]
 
     def to(self, *args, **kargs):
-        """
-        Apply the PyTorch `.to` method to the contained model.
-        """
+        """ Apply the PyTorch `.to` method to the contained model. """
         self.model = self.model.to(*args, **kargs)
         return self

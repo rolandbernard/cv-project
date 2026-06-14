@@ -1,10 +1,13 @@
 
+import copy
+
 import torch
 import scipy.optimize
 
 import util
 import camera
 import kalman
+import source
 from camera import Camera
 from detect import PoseDetector
 from kalman import LinearPhysics
@@ -27,24 +30,18 @@ class Track:
         self.moved(init_mean, init_cov)
 
     def moved(self, mean: torch.Tensor, cov: torch.Tensor):
-        """
-        Update the track to the new state (from a prediction).
-        """
+        """ Update the track to the new state (from a prediction). """
         self.mean = mean
         self.cov = cov
 
     def update(self, mean: torch.Tensor, cov: torch.Tensor):
-        """
-        Update the track to the new state (from a detection).
-        """
+        """ Update the track to the new state (from a detection). """
         self.moved(mean, cov)
         self.last_detection = 0
         self.num_detection += 1
 
     def no_update(self):
-        """
-        Record that there was no update for this track for one update cycle.
-        """
+        """ Record that there was no update for this track for one update cycle. """
         self.last_detection += 1
 
     def get_keypoints(self) -> torch.Tensor:
@@ -73,6 +70,8 @@ class Track:
         return per_point_cov(self.get_full_covariances())
 
     def __getitem__(self, key: str):
+        if key == "id":
+            return self.id
         if key == "kpts":
             return self.get_keypoints()
         raise KeyError
@@ -94,8 +93,8 @@ class Tracker:
     """
 
     def __init__(
-        self, detector: PoseDetector, physics: LinearPhysics, min_age: int = 3, max_inv: int = 30,
-        match_threshold: float = 0.0, min_var=1e-5, num_keypoint: int = 17
+        self, detector: PoseDetector, physics: LinearPhysics, min_age: int = 3, max_inv: int = 10,
+        mo_threshold: float = 0.0, mn_threshold: float = 0.0, min_var=1e-5, num_keypoint: int = 17
     ):
         self.tracks: list[Track] = []
         self.last_id = 0
@@ -103,20 +102,14 @@ class Tracker:
         self.physics = physics
         self.min_age = min_age
         self.max_inv = max_inv
-        self.match_threshold = match_threshold
+        self.mo_threshold = mo_threshold
+        self.mn_threshold = mn_threshold
         self.min_var = min_var
         self.num_keypoint = num_keypoint
 
-    def get_prediction(self, dt: None | float = None) -> list[Track]:
-        """
-        Get the internal state prediction for the given time in the future. By
-        default, if no time step is given, the current prediction is returned.
-        """
-        if dt is None or dt == 0.0:
-            # We don't really predict, we assume everything stays the same.
-            return [track for track in self.tracks if track.num_detection >= self.min_age]
-        else:
-            raise NotImplementedError
+    def get_prediction(self) -> list[Track]:
+        """ Get the internal state prediction for the current step. """
+        return [copy.copy(track) for track in self.tracks if track.num_detection >= self.min_age]
 
     def predict(self, dt: float):
         """
@@ -160,8 +153,8 @@ class Tracker:
             total_cov = covs[j] + pred_covar
             dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
             _, logdet = torch.linalg.slogdet(total_cov)
-            cost_matrix[:num_track, j] = dist + \
-                logdet - num_dim*self.match_threshold
+            cost_matrix[:num_track, j] = dist + logdet \
+                - num_dim*self.mo_threshold
         # Run Hungarian matching.
         cost_np = cost_matrix.cpu().numpy()
         row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_np)
@@ -237,9 +230,7 @@ class Tracker:
         return matched_results
 
     def new_track(self, mean: torch.Tensor) -> Track:
-        """
-        Create a new track with the given mean.
-        """
+        """ Create a new track with the given mean. """
         self.last_id += 1
         full_mean = self.physics.init_mean.clone()
         full_mean[:self.num_keypoint*3] = mean
@@ -247,9 +238,7 @@ class Tracker:
         return Track(self.last_id, full_mean, full_cov, self.num_keypoint)
 
     def constrain_covars(self):
-        """
-        Constrain the covariances to avoid them becoming too small.
-        """
+        """ Constrain the covariances to avoid them becoming too small. """
         for track in self.tracks:
             track.cov.diagonal().clamp(min=self.min_var)
 
@@ -316,3 +305,22 @@ class Tracker:
                 self.update_track(track, m_cams, m_kpts, m_covs)
                 new_tracks.append(track)
         self.tracks = new_tracks
+
+    def evaluate(self, source: source.VideoSource) -> tuple[list[Camera], list[list[Track]], float]:
+        """
+        Run the complete evaluation loop using the given video source and return
+        as a result the camera positions, tracks in each frame, and fps. This will
+        run until the video source is exhausted.
+        """
+        last_cams, frames = [], []
+        last_ts = 0
+        while True:
+            ts, imgs, cams = source.next_frames()
+            if ts is None or cams is None or imgs is None:
+                break
+            dt = ts - last_ts
+            self.predict(dt)
+            self.update(cams, imgs)
+            frames.append(self.get_prediction())
+            last_ts, last_cams = ts, cams
+        return last_cams, frames, 1/dt

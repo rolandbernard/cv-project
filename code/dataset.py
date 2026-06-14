@@ -14,9 +14,7 @@ from camera import Camera
 
 
 def download_file(filename: str, data_url: str):
-    """
-    Download a file from the given url and put it into the given filename.
-    """
+    """ Download a file from the given url and put it into the given filename. """
     try:
         with urllib.request.urlopen(data_url) as req_stream:
             data = req_stream.read()
@@ -27,9 +25,7 @@ def download_file(filename: str, data_url: str):
 
 
 def download_zip(folder: str, data_url: str):
-    """
-    Download a zip archive from the given url and extract it into the given folder.
-    """
+    """ Download a zip archive from the given url and extract it into the given folder. """
     try:
         with urllib.request.urlopen(data_url) as req_stream:
             with zipfile.ZipFile(io.BytesIO(req_stream.read())) as zip_file:
@@ -39,9 +35,7 @@ def download_zip(folder: str, data_url: str):
 
 
 def download_tar(folder: str, data_url: str):
-    """
-    Download a tar archive from the given url and extract it into the given folder.
-    """
+    """ Download a tar archive from the given url and extract it into the given folder. """
     try:
         with urllib.request.urlopen(data_url) as req_stream:
             with tarfile.open(fileobj=io.BytesIO(req_stream.read()), mode="r:*") as zip_file:
@@ -51,17 +45,13 @@ def download_tar(folder: str, data_url: str):
 
 
 class SalsaDataset:
-    """
-    Class for handling the Salsa dataset (https://tev.fbk.eu/resources/salsa).
-    """
+    """ Class for handling the Salsa dataset (https://tev.fbk.eu/resources/salsa). """
 
     fps = 15
     scenes: list[str] = ["PosterSession", "CocktailParty"]
 
     def __init__(self, path: str = "./data/salsa"):
-        """
-        Create an instance of the class with the data stored in the given directory.
-        """
+        """ Create an instance of the class with the data stored in the given directory. """
         self.path = path
 
     def download(self):
@@ -104,16 +94,12 @@ class SalsaDataset:
 
 
 class H3wbDataset:
-    """
-    Class for handling the H3WB dataset (https://github.com/wholebody3d/wholebody3d).
-    """
+    """ Class for handling the H3WB dataset (https://github.com/wholebody3d/wholebody3d). """
 
     fps = 10
 
     def __init__(self, path: str = "./data/h3wb"):
-        """
-        Create an instance of the class with the data stored in the given directory.
-        """
+        """ Create an instance of the class with the data stored in the given directory. """
         self.path = path
 
     def download(self):
@@ -129,17 +115,13 @@ class H3wbDataset:
 
 
 class D3pwDataset:
-    """
-    Class for handling the 3DPW dataset (https://virtualhumans.mpi-inf.mpg.de/3DPW/).
-    """
+    """ Class for handling the 3DPW dataset (https://virtualhumans.mpi-inf.mpg.de/3DPW/). """
 
     endpoint: str = "https://virtualhumans.mpi-inf.mpg.de/3DPW"
     fps = 30
 
     def __init__(self, path: str = "./data/3dpw"):
-        """
-        Create an instance of the class with the data stored in the given directory.
-        """
+        """ Create an instance of the class with the data stored in the given directory. """
         self.path = path
 
     @property
@@ -147,9 +129,7 @@ class D3pwDataset:
         return os.listdir(f"{self.path}/imageFiles")
 
     def download(self):
-        """
-        Download the dataset from official source. Download is skipped if already present.
-        """
+        """ Download the dataset from official source. Download is skipped if already present. """
         os.makedirs(self.path, exist_ok=True)
         if not os.path.exists(f"{self.path}/imageFiles"):
             download_zip(self.path, f"{self.endpoint}/imageFiles.zip")
@@ -158,9 +138,7 @@ class D3pwDataset:
 
 
 class CmuPanopticDataset:
-    """
-    Class for handling the CMU Panoptic dataset (http://domedb.perception.cs.cmu.edu/index.html).
-    """
+    """ Class for handling the CMU Panoptic dataset (http://domedb.perception.cs.cmu.edu/index.html). """
 
     endpoint: str = "http://domedb.perception.cs.cmu.edu/webdata/dataset"
     hd_fps = 29.97
@@ -234,9 +212,7 @@ class CmuPanopticDataset:
     ]
 
     def __init__(self, path: str = "./data/panoptic"):
-        """
-        Create an instance of the class with the data stored in the given directory.
-        """
+        """ Create an instance of the class with the data stored in the given directory. """
         self.path = path
 
     def download_scene(self, name: str, num_hd_cams: int = 0, num_vga_cams: int = 0):
@@ -279,9 +255,7 @@ class CmuPanopticDataset:
         return True
 
     def download(self, num_hd_cams: int = 0, num_vga_cams: int = 4, scenes: None | list[str] = None):
-        """
-        Download the dataset from official source. Download is skipped if already present.
-        """
+        """ Download the dataset from official source. Download is skipped if already present. """
         os.makedirs(self.path, exist_ok=True)
         for scene in scenes or self.scenes:
             self.download_scene(scene, num_hd_cams, num_vga_cams)

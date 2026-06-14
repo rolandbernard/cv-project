@@ -22,9 +22,7 @@ class LinearPhysics:
         self.get_dyn = lru_cache()(self._get_dyn)
 
     def _get_dyn(self, dt: float) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Create a new dynamics and covariance matrix for the given timestamp.
-        """
+        """ Create a new dynamics and covariance matrix for the given timestamp. """
         return discretize(dt, self.dyn_mat, self.dyn_cov)
 
     def predict(self, dt: float, mean: torch.Tensor, cov: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -37,9 +35,7 @@ class LinearPhysics:
         return predict(mean, cov, dyn_mat, dyn_cov)
 
     def to(self, *args, **kargs):
-        """
-        Apply the PyTorch `.to` method to the contained model.
-        """
+        """ Apply the PyTorch `.to` method to the contained model. """
         self.dyn_mat = self.dyn_mat.to(*args, **kargs)
         self.dyn_cov = self.dyn_cov.to(*args, **kargs)
         self.init_mean = self.init_mean.to(*args, **kargs)
@@ -49,9 +45,7 @@ class LinearPhysics:
 
 
 def discretize(dt: float, dyn_mat: torch.Tensor, dyn_cov: torch.Tensor):
-    """
-    Discretize the given continuous-time matrices using the given time.
-    """
+    """ Discretize the given continuous-time matrices using the given time. """
     # Use a second order approximation for now.
     N, N = dyn_mat.shape
     dyn_mat = torch.eye(N, device=dyn_mat.device) + dyn_mat * dt \
@@ -151,9 +145,7 @@ def eupdate_ex(
 
 
 def batched_jacobian(f: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Compute the Jacobian over arbitrarily batch dimension of the given function f.
-    """
+    """ Compute the Jacobian over arbitrarily batch dimension of the given function f. """
     def func(x):
         res = f(x)
         return res, res
