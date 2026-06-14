@@ -1,0 +1,17 @@
+einops==0.8.2
+gdown==6.0.0
+ipywidgets==8.1.8
+jupyter==1.1.1
+matplotlib==3.10.9
+numpy==2.4.6
+opencv-contrib-python==4.13.0.92
+opencv-python==4.13.0.92
+pandas==3.0.3
+pillow==12.2.0
+pyvista==0.48.4
+scipy==1.17.1
+seaborn==0.13.2
+torch==2.12.0
+torchvision==0.27.0
+trame==3.13.2
+ultralytics==8.4.51
