@@ -1,4 +1,5 @@
 
+import os
 import json
 import random
 
@@ -55,22 +56,32 @@ def to_list(something) -> list:
     return something
 
 
+def save_json(file: str, data):
+    """ Save a JSON file and create the directory if necessary. """
+    os.makedirs(os.path.dirname(file), exist_ok=True)
+    with open(file, "w") as f:
+        json.dump(data, f)
+
+
+def load_json(file: str):
+    """ Load some JSON file into a python object and return it. """
+    with open(file, "r") as f:
+        return json.load(f)
+
+
 def save_tracks(
     file: str, cams: list, frames: list[list], fps: float,
     center: tuple[float, float, float] = (0, 0, 0), up: tuple[float, float, float] = (0, -1, 0)
 ):
     """ Save recorded tracking data to the given file. """
-    data = {
+    save_json(file, {
         "cameras": [{k: to_list(c[k]) for k in ["R", "t", "K"]} for c in cams],
         "frames": [[{k: to_list(t[k]) for k in ["id", "kpts"]} for t in f] for f in frames],
         "fps": fps, "center": list(center), "up": list(up)
-    }
-    with open(file, "w") as f:
-        json.dump(data, f)
+    })
 
 
 def load_tracks(file: str):
     """ Load recorded tracking data from the given file. """
-    with open(file, "r") as f:
-        data = json.load(f)
+    data = load_json(file)
     return data["cameras"], data["frames"], data["fps"], data["center"], data["up"]
