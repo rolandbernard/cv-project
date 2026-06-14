@@ -1,4 +1,5 @@
 
+import time
 import copy
 from itertools import count
 
@@ -107,6 +108,19 @@ class Tracker:
         self.mn_threshold = mn_threshold
         self.min_var = min_var
         self.num_keypoint = num_keypoint
+        self.timing_stats = {
+            "detection": [0.0, 0],
+            "matching_old": [0.0, 0],
+            "matching_new": [0.0, 0],
+            "update": [0.0, 0],
+            "create_new": [0.0, 0],
+            "prediction": [0.0, 0]
+        }
+
+    def add_time_stat(self, stage: str, start: float):
+        """ Add a call to the timing stats that ended now and started at the given time. """
+        self.timing_stats[stage][0] += (time.perf_counter() - start)
+        self.timing_stats[stage][1] += 1
 
     def get_prediction(self) -> list[Track]:
         """
@@ -121,12 +135,14 @@ class Tracker:
         the internal state of all tracks accordingly, but without using any new
         external information.
         """
+        t_start = time.perf_counter()
         if len(self.tracks) != 0:
             means = torch.stack([track.mean for track in self.tracks])
             covs = torch.stack([track.cov for track in self.tracks])
             means, covs = self.physics.predict(dt, means, covs)
             for track, mean, cov in zip(self.tracks, means, covs):
                 track.moved(mean, cov)
+        self.add_time_stat("prediction", t_start)
 
     def associate_pred_to_detection(self, cam: Camera, kpts: torch.Tensor, covs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -273,8 +289,11 @@ class Tracker:
         perform any internal time step updates.
         """
         # Perform 2d detection on each image.
+        t_start = time.perf_counter()
         detections = self.detector.detect(cams, imgs)
+        self.add_time_stat("detection", t_start)
         # Match each images detections to tracks.
+        t_start = time.perf_counter()
         obs: list[tuple[list[Camera], list[torch.Tensor], list[torch.Tensor]]] \
             = [([], [], []) for _ in range(len(self.tracks))]
         nomatch = []
@@ -287,8 +306,10 @@ class Tracker:
             nomatch.append((
                 util.remove_idx(kpts, det_idx), util.remove_idx(covs, det_idx)
             ))
-        new_tracks = []
+        self.add_time_stat("matching_old", t_start)
         # Update matched tracks using new detections.
+        t_start = time.perf_counter()
+        new_tracks = []
         for track, (ob_cams, ob_kpts, ob_covs) in zip(self.tracks, obs):
             if len(ob_cams) != 0:
                 self.update_track(track, ob_cams, ob_kpts, ob_covs)
@@ -298,8 +319,13 @@ class Tracker:
                 track.no_update()
                 if track.num_detection >= self.min_age and track.last_detection <= self.max_inv:
                     new_tracks.append(track)
-        # Match unassigned detections to create new tracks.
+        self.add_time_stat("update", t_start)
+        # Match unassigned detections among between camera views.
+        t_start = time.perf_counter()
         matched = self.associate_detections(cams, nomatch)
+        self.add_time_stat("matching_new", t_start)
+        t_start = time.perf_counter()
+        # Create new tracks.
         for match in zip(*matched):
             m_cams, m_kpts, m_covs = [], [], []
             for cam, m, det in zip(cams, match, nomatch):
@@ -319,6 +345,7 @@ class Tracker:
                 self.update_track(track, m_cams, m_kpts, m_covs)
                 new_tracks.append(track)
         self.tracks = new_tracks
+        self.add_time_stat("create_new", t_start)
 
     def evaluate(self, source: source.VideoSource, progress=100) -> tuple[list[Camera], list[list[Track]], float]:
         """
