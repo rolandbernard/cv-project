@@ -4,10 +4,11 @@ Report of 5 to max 10 pages.
 * Introduction
   * Motivation: Applications in healthcare (e.g., remote monitoring, gait analysis, fall detection), robotics (e.g., understanding surroundings, avoid humans coming close to dangerous machinery), crowd control, virtual reality, and entertainment (e.g., animation for virtual effects, use of body as input device for gaming or virtual avatars).
   * Objective: Investigating the application of Extended Kalman Filter for 3D human pose estimation and tracking.
+    * Fusing disjoint, multi-view 2D video frames into a coherent, temporally consistent 3D pose state.
     * Take as input multi-view video sequences.
     * Get as output 3D skeletons labeled with person temporally consistent person IDs.
-    * Compare performance between differently sized pre-trained models.
-    * Compare performance based on the number of used cameras.
+    * Compare performance between differently sized pre-trained models (deep learning architecture capacity).
+    * Compare performance based on the number of used cameras (spatial viewpoint density).
   * Outline the report structure.
 * Dataset Description
   * The CMP Panoptic dataset: 65 video sequences (5.5 hours) captured using 511 cameras, 480 VGA cameras (640×480 resolution at 25 fps) and 31 HD cameras (1920×1080 resolution at 30 fps).
@@ -16,28 +17,57 @@ Report of 5 to max 10 pages.
   * Ground truth annotations use COCO19 format. This project converts these into the COCO17 format predicted by YOLO based networks by discarding the extra two points.
   * None of the cameras is able to view the complete space, they all just show some part of it.
   * Five of the video sequences have been selected for use in the evaluation. (`171204_pose6`, `161029_piano4`, `170915_office1`, `161029_build1`, and `160224_haggling1`)
+  * For this project only 16 of the VGA type cameras were used. The first 16 from the official download script were used. These are selected such as to be approximately uniformly distributed. 
 * Background (reference the lecture notes)
   * Object Detection
+    * Review of Anchor-based vs. Anchor-free models.
+    * Top-down vs. bottom-up paradigms for Multi-Person 2D keypoint estimation.
+    * Overview of the Ultralytics YOLO pose estimation architecture framework.
   * Object Tracking
-  * Camera Calibration
-  * Triangulation
+    * Foundations of Bayesian filtering.
+    * The linear Kalman Filter formulation (State transitions, control inputs, measurement updates).
+    * The Extended Kalman Filter (EKF): Linearizing non-linear observation equations via Taylor expansion and Jacobian matrices.
+    * Review Association to create full tracks.
+  * Projective Geometry and Camera Calibration
+    * Pinhole camera model dynamics.
+    * Intrinsic Parameters (K): Focal lengths, principal points, and lens distortion correction coefficients.
+    * Extrinsic Parameters (R,t): World-to-camera coordinate transformation frameworks.
+  * Multi-View Triangulation
+    * Mathematical formulation of direct linear transformation (DLT) for 3D reconstruction from multi-view intersecting rays.
 * Methodology 
   * System Architecture
     * Overview.
-    * 2D Detections
-    * Kalman Filter
+      * Detailed breakdown of the tracking workflow pipeline.
+    * 2D Detection and Uncertainty Estimation
+      * Inference loop structure using PyTorch.
+      * Bounding Box and Visibility Scaling: Dynamic formulation of the observation covariance matrix (Σ) using bounding box magnitude and joint visibility confidences (mapping thresholds: threshold, kpt_threshold).
+      * Transformation from pixel space to normalized camera coordinates utilizing undistortion operations.
+    * State Representation and Kalman Filtering
+      * State Vector Composition: 3D coordinates and velocities for all 17 joints.
+      * State Transition Matrix (F): Continuous linear physics model integration.
+      * Discretization: Implementing a second-order approximation to compute discrete-time state transitions and process noise covariance matrices based on Δt.
+      * Non-linear pinhole projection mapping function.
+      * Observation Merging: Concatenating independent multi-camera updates into a centralized EKF update phase.
+      * Auto-Differentiation: Leveraging PyTorch’s functional API to compute the measurement Jacobian dynamically during runtime updates.
+    * Data Association
+      * Tracking Existing Targets: Associating predictions to current tracks using Mahalanobis distance + logdet of covars cost matrices combined with the Hungarian algorithm.
+      * Cross-View Association: Greedily clustering unassigned 2D detections across disjoint camera angles to discover new 3D targets.
     * Track Creation and Deletion
-    * Association of Detections to Tracks
-    * Association Between Views
+      * All detections not matched to existing tracks are matched across views. 
+      * All detections matched between two or more views are used to initialized new tracks via triangulation.
+      * Minimum age of tracks condition for promotion from tentative to active state.
+      * Tentative tracks without observation are deleted immediately.
+      * Active tracks without observation are deleted after a maximum number of non detections.
   * Evaluation Procedure
     * Parameter selection: Due to time constraints the system parameters have been initialized by guessing from intuition. Parameters, such as the covariance values of the Kalman filter and 2D detections could be optimized from data.
+      * Detail the actual parameters chosen.
     * Selected 5 sequences.
     * Executed the tracking system on sequences with different combinations of YOLO model sizes and number of cameras.
     * Comparing ground truth skeletons with those predicted from the developed system.
   * Evaluation Metrics
-    * MOTA
-    * MOTP
-    * MPJPE
+    * Mean Per-Joint Position Error (MPJPE): Mean Euclidean deviations against ground truth skeletons.
+    * Multi-Object Tracking Accuracy (MOTA): Accounting for False Positives (FP), False Negatives (FN), and Identity Switches (ID-Switches).
+    * Multi-Object Tracking Precision (MOTP): Tracking error optimization across true positives.
     * Precision
     * Recall
 * Results and Discussion
@@ -47,7 +77,14 @@ Report of 5 to max 10 pages.
   * Qualitative Results
     * Visual analysis of predicted skeletons vs. ground truth.
 * Conclusion and Outlook
-  * Summary of the performed work and obtained results
+  * Summary of Contributions
+    * Recap of the multi-view EKF pipeline implementation and its ability to track multi-person trajectories reliably.
+    * Final evaluation takeaway regarding viewpoint density (camera view count) versus localized detection performance (YOLO size).
+  * Identified Challenges and Limitations
+    * Rigid hand-tuned covariance parameters; manual heuristic bottlenecks.
+    * Absence of structural human anatomy constraints during tracking.
+    * Limited visibility of cameras and occlusions.
+    * Incorrect predictions from 2D detector.
   * Possible future improvements
     * Learn system parameters from data.
     * Add constraints to the skeleton to maintain bone length or physically plausible poses.
