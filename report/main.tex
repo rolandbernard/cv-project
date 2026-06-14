@@ -1,0 +1,114 @@
+\documentclass[10pt,a4paper,twocolumn]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{anysize, longtable}
+\usepackage{amsthm, amsfonts, amsmath, amssymb, booktabs, float}
+\usepackage{sectsty, csquotes, xcolor, xspace, setspace, listings}
+\usepackage{graphicx, tabularx, changepage, multirow, subcaption}
+\usepackage{algorithm, algpseudocode, multicol, cuted, colortbl}
+\usepackage{makecell, supertabular}
+\usepackage[hidelinks,bookmarksdepth=3]{hyperref}
+\usepackage[capitalise]{cleveref}
+\usepackage[inline]{enumitem}
+\usepackage[english]{babel}
+\usepackage{microtype}
+\usepackage{libertinus}
+\usepackage[scale = 0.85]{plex-mono}
+\usepackage[maxbibnames=99,maxcitenames=1,style=authoryear]{biblatex}
+\usepackage{titlesec}
+\usepackage{tikz}
+
+\usetikzlibrary{fit, shapes.geometric, shapes.symbols, positioning, shapes.misc, calc, arrows.meta, patterns, backgrounds, decorations, decorations.markings, decorations.pathreplacing, shadows, hobby, decorations.pathmorphing}
+
+\makeatletter
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{example}{Example}
+
+\theoremstyle{remark}
+\newtheorem*{note}{Note}
+\newtheorem*{remark}{Remark}
+
+\newcommand{\inlinecode}[1]{\lstinline[basicstyle=\ttfamily,columns=fixed]$#1$}
+\lstset{basicstyle=\setstretch{0}\small\ttfamily,breaklines=true,columns=fixed,captionpos=b,xleftmargin=0.5cm}
+
+\newlength{\offsetpage}
+\newenvironment{widepage}[1][2cm]{
+  \setlength{\offsetpage}{#1}
+  \begin{adjustwidth}{-\offsetpage}{-\offsetpage}
+  \addtolength{\linewidth}{2\offsetpage}
+}{\end{adjustwidth}}
+
+\algnewcommand{\IIf}[1]{\State \algorithmicif\ #1\ \algorithmicthen}
+\algnewcommand{\IElse}[1]{\algorithmicelse\ #1}
+\algnewcommand{\EndIIf}{\unskip\ \algorithmicend\ \algorithmicif}
+
+\addbibresource{biblio.bib}
+
+\allowdisplaybreaks
+\marginsize{2.0cm}{2.0cm}{1.25cm}{1.25cm}
+\setcounter{tocdepth}{2}
+\setlist[itemize]{topsep=0pt, partopsep=0pt, parsep=0pt, itemsep=\parskip}
+\setlist[enumerate]{topsep=0pt, partopsep=0pt, parsep=0pt, itemsep=\parskip}
+\titlespacing*{\paragraph}{0pt}{0.5\baselineskip}{0.5\baselineskip}
+\captionsetup[figure]{aboveskip=5pt}
+\captionsetup[subfigure]{aboveskip=3pt}
+
+\title{3D Human Pose Tracking From Multi-View 2D Detections}
+\author{Roland Bernard, 19598, \inlinecode{rolbernard@unibz.it}}
+\date{June 2026}
+
+\def\maketitle{
+\begin{strip}
+  \begin{adjustwidth}{5mm}{5mm}
+    \vspace{-4.5em}
+    \noindent{\small\bfseries Project Report -- Computer Vision 2025/2026\par}
+    \vskip 0.25em
+    \noindent{\LARGE\bfseries \@title\par}
+    \vskip 1em
+    \noindent{\large \@author\par}
+    \vskip 1em
+    \noindent{\small \@date\par}
+    \vskip 1em
+  \end{adjustwidth}
+\end{strip}
+}
+\renewenvironment{abstract}{
+  \vskip 1em
+  \begin{quote}
+  {\normalsize \abstractname\par}
+  \small
+}{
+  \end{quote}
+  \vskip 1em
+}
+
+\makeatother
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\end{abstract}
+
+\input{1.introduction.tex}
+
+\input{2.dataset.tex}
+
+\input{3.background.tex}
+
+\input{4.methodology.tex}
+
+\input{5.results.tex}
+
+\input{6.conclusion.tex}
+
+\printbibliography
+
+\end{document}

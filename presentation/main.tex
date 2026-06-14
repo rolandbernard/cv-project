@@ -1,0 +1,206 @@
+\documentclass[aspectratio=1610]{beamer}
+
+\usepackage{graphicx}
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{csquotes, xcolor, xspace, changepage, setspace, listings}
+\usepackage{libertinus}
+\usepackage{roboto}
+\usepackage{fontawesome5}
+\usepackage[scale = 0.75]{plex-mono}
+\usepackage{tikz, subcaption}
+
+\usetikzlibrary{fit, shapes.geometric, shapes.symbols, positioning, shapes.misc, calc, arrows.meta, patterns, backgrounds, decorations, decorations.markings, decorations.pathreplacing, shadows, hobby}
+
+\usepackage[backend=bibtex,style=authoryear]{biblatex}
+\addbibresource{biblio.bib}
+
+\title{3D Human Pose Tracking \\ From  Multi-View 2D Detections}
+\author{Roland Bernard}
+\date{June 2026}
+
+\definecolor{unibzblue}{HTML}{0086ec}
+\definecolor{unibzblue2}{HTML}{f0f8ff}
+
+\setbeamercolor{outerbox}{fg=black,bg=unibzblue2}
+\setbeamercolor{innerbox}{fg=white,bg=unibzblue}
+
+\setbeamertemplate{title page}{
+  \scriptsize 
+  \begin{tabular}{ll}
+    \vspace*{40mm} \\
+    \multicolumn{2}{l}{\raggedright Project Presentation -- Computer Vision 2025/2026} \\
+    \\
+    \multicolumn{2}{p{\linewidth}}{\raggedright \huge \bf \inserttitle} \\
+    \\
+    \\
+    & \insertauthor \\
+    \\
+    & \insertdate \\
+  \end{tabular}
+}
+
+\setbeamertemplate{frametitle}{
+  \vspace*{6mm}
+  \Large \bf \color{black} \insertframetitle
+}
+
+\setbeamertemplate{itemize items}{\scriptsize\raisebox{0.6mm}{\color{unibzblue} $\blacktriangleright$}}
+
+\beamertemplatenavigationsymbolsempty
+\setbeamertemplate{footline}{
+  \begin{beamercolorbox}[wd=\paperwidth,right]{section in head/foot}
+    \usebeamerfont{date in head/foot}\hspace*{2em}
+    \insertframenumber{}\hspace*{2mm} 
+    \vspace*{2mm}
+  \end{beamercolorbox}
+}
+
+\newcommand{\litem}{{\scriptsize\raisebox{0.6mm}{\color{unibzblue} $\blacktriangleright$}}}
+\newcommand{\sitem}{{\scriptsize\raisebox{0.2mm}{\color{unibzblue} $\rightarrow$}}\enspace}
+\newcommand{\icon}[1]{\textcolor{unibzblue}{\faIcon[solid]{#1}}}
+
+\newlength{\offsetpage}
+\newenvironment{narrowpage}[1][3mm]{
+  \setlength{\offsetpage}{#1}
+  \begin{adjustwidth}{\offsetpage}{\offsetpage}
+}{
+  \end{adjustwidth}
+}
+\newenvironment{widepage}[1][10mm]{
+  \setlength{\offsetpage}{#1}
+  \begin{adjustwidth}{-\offsetpage}{-\offsetpage}
+}{
+  \end{adjustwidth}
+}
+
+\newenvironment{items}{
+  \begin{narrowpage}
+}{
+  \end{narrowpage}
+}
+\newenvironment{oitem}[2][3mm]{
+  \vspace*{2mm}
+  \begin{beamercolorbox}[rounded=false,colsep=#1]{outerbox}
+    \parbox[t]{2mm}{\centering#2}\parbox[t]{2mm}{\ }%
+    \begin{minipage}[t]{\linewidth}
+}{
+    \end{minipage}
+  \end{beamercolorbox}
+  \vfill
+}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \begin{tikzpicture}[
+    remember picture, overlay,
+    every path/.style={opacity=0.10},
+    yshift=20, xshift=200, scale=1.5, transform shape
+  ]
+    \node {\includegraphics[width=0.9\linewidth]{figures/background.png}};
+  \end{tikzpicture}
+  \titlepage
+\end{frame}
+
+\begin{frame}
+\frametitle{Task -- Human Pose Estimation}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Given: \\
+      \sitem {\footnotesize Multiple video sequences containing multiple people.} \\
+      \sitem {\footnotesize Recorded using multiple calibrated cameras.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Reconstruct: \\
+      \sitem {\footnotesize 3D coordinates of skeletal joint for each subject.} \\
+      \sitem {\footnotesize Movement of skeletal joint over time.}
+    \end{oitem}
+    \vspace*{2mm}
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.9\linewidth]{figures/introduction.pdf}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{How am I trying to solve it?}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Summary: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.} \\
+      \sitem {\footnotesize Apply Kalman filtering to smooth out noise.}
+    \end{oitem}
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{figures/approach.pdf}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{What makes this difficult?}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Challenges: \\
+      \sitem {\footnotesize Occlusions can make some joints unobserved.} \\
+      \sitem {\footnotesize Matching predictions between multiple views.} \\
+      \sitem {\footnotesize Matching predictions across time.} \\
+      \sitem {\footnotesize Noisy 2D estimates make the above more difficult.} \\
+      \sitem {\footnotesize 2D pose estimator often misses some people.}
+    \end{oitem}
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{figures/difficulties.png}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Current Approach -- Extended Kalman Filter}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Summary: \\
+      \sitem {\footnotesize Keep internal 3D state of all currently tracked persons.} \\
+      {\footnotesize Repeat for each frame:} \\
+      \sitem {\footnotesize Predict next frame state using current state.} \\
+      \sitem {\footnotesize Match predictions with detections.} \\
+      \quad \sitem {\footnotesize Update internal 3D state using detections.} \\
+      \sitem {\footnotesize Associate unmatched detections between views.} \\
+      \quad \sitem {\footnotesize Create new internal state using triangulation.}
+    \end{oitem}
+    \begin{figure}
+      \centering
+      \includegraphics[width=0.7\linewidth]{figures/kalman.pdf}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{What to do next?}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Learn filter parameters from data. \\
+      \sitem {\footnotesize Currently, just guessed manually.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Add constraint that forces consistency of joint lengths. \\
+      \sitem {\footnotesize To improve results if person is partially occluded.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Try using a particle filter with occlusion aware likelihood. \\
+      \sitem {\footnotesize More expressive than Kalman filter.} \\
+      \sitem {\footnotesize Could accurately model occlusions.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+{
+\setbeamercolor{background canvas}{bg=black}
+\begin{frame}[plain]{}
+\end{frame}
+}
+
+\end{document}
