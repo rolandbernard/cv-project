@@ -68,4 +68,8 @@ The assumption of linear projection made by the above pinhole camera model, wher
 
 \subsection{Multi-View Triangulation} \label{triangulate}
 
-
+Even once corresponding points across multiple camera views have been identified, their 3D position $\tilde{x}_w$ must still be reconstructed from the 2D pixel locations. Rays back-projected from pixels will nearly never intersect perfectly in 3D space due to measurement noise. As such, a noise robust algorithm must be used that can recover 3D coordinates using multiple noise 2D projections \parencite[p. 16-17]{Lanz2026Notes}. If we denote $\tilde{x}_i^s$ the homogeneous 2D observation in the $i$-th camera, and $\mathbf{P}_i$ the projection matrix of that that camera, because $\tilde{x}_i^s$ and the projected point $\mathbf{P}_i \tilde{x}_w$ represent the same point up to scale, their cross product must be zero:
+\begin{align*}
+    \tilde{x}_i^s \times \mathbf{P}_i \tilde{x}_w &= 0 \\
+\end{align*}
+This cross product yields a set of three linear equations for each camera view. However, the third is a linear combination of the first two, so it can be discarded. By stacking the equations from $N \ge 2$ camera views, we obtain a homogeneous linear system $\mathbf{A} \tilde{x}_w = 0$. Because $\tilde{x}_w$ is defined only up to scale, we impose the constraint $||\tilde{x}_w|| = 1$. The optimal least-squares solution to this system is found by computing the Singular Value Decomposition of $\mathbf{A}$ and taking the right singular vector associated with the smallest singular value. Alternatively, it is also possible to transform the homogeneous system in to an in-homogeneous system and solve it using standard least squares. This latter approach is taken in the project.
