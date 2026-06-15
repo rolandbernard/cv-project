@@ -78,7 +78,7 @@ class SalsaDataset:
             gdown.cached_download(  # type: ignore
                 id=id, path=f"{self.path}/CocktailParty/cam{i}.avi")
 
-    def get_source(self, name: str = "PosterSession") -> source.VideoSource:
+    def get_source(self, name: str = "PosterSession") -> source.OfflineVideoSource:
         """
         Load one of the two video sequences from the dataset into a video source
         for further processing. The name can be wither "PosterSession" (default)
