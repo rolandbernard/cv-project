@@ -51,7 +51,7 @@ The state dynamics are modeled by a continuous-time linear velocity process. The
     \mathbf{Q}_k &\approx \mathbf{Q} \Delta t_i + \frac{1}{2} (\mathbf{F} \mathbf{Q} + \mathbf{Q} \mathbf{F}^T) \Delta t_i^2
 \end{align*}
 
-The measurement function $h_c(\mathbf{x}): \mathbb{R}^{102} \to \mathbb{R}^{34}$ acts as a non-linear pinhole projection mapping the 102-dimensional 3D state back to a 34-dimentional observation of 2D coordinates in camera $c$:
+The measurement function $h_c(\mathbf{x}): \mathbb{R}^{102} \to \mathbb{R}^{34}$ acts as a non-linear pinhole projection mapping the 102-dimensional 3D state back to a 34-dimensional observation of 2D coordinates in camera $c$:
 \begin{align*}
     h_c(\mathbf{x}) &= \begin{bmatrix} \pi_c(\mathbf{p}_1)^T & \pi_c(\mathbf{p}_2)^T & \dots & \pi_c(\mathbf{p}_{17})^T \end{bmatrix}^T
 \end{align*}
@@ -80,7 +80,7 @@ The association between detections and existing tracks is performed independentl
 \end{align*}
 where $N_{dim} = 34$, and $\theta_{mo}$ is a threshold parameter. Note that we fill the cost matrix with zero padding to allow for unmatched tracks or detections. The optimal association is found by solving this cost matrix using the Hungarian algorithm  \parencite{kuhn1955hungarian} via the SciPy library \parencite{virtanen2020scipy} implementation. This process can be interpreted as an implementation of maximum likelihood based model selection amongst all possible associations.
 
-Detections that are not matched to existing tracks by the above method may belong to new people entering the scene. Since these detections lack 3D track priors, we must match them across different camera views. To achieve this goal, this project employees an iterative greedy-optimal matching approach to associate 2D detections across views. The algorithm works by first building associations between the first two views, then iteratively adding views. During the iterative addition step we compute a cost matrix and solve for the optimal association using the Hungarian algorithm in an effort to minimize the reprojection error:
+Detections that are not matched to existing tracks by the above method may belong to new people entering the scene. Since these detections lack 3D track priors, we must match them across different camera views. To achieve this goal, this project employs an iterative greedy-optimal matching approach to associate 2D detections across views. The algorithm works by first building associations between the first two views, then iteratively adding views. During the iterative addition step we compute a cost matrix and solve for the optimal association using the Hungarian algorithm in an effort to minimize the reprojection error:
 \begin{align*}
     C_{cross} &= \frac{1}{K}\sum_{k=1}^K \left( d_{\Sigma_k}(\mathbf{z}_k, \pi_k(\mathbf{X}_{3D})) + \ln|\Sigma_k| \right) - N_{dim}\theta_{mn}
 \end{align*}
