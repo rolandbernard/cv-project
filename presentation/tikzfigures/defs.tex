@@ -1,0 +1,40 @@
+\definecolor{unibzblue}{HTML}{0086ec}
+\definecolor{unibzblue2}{HTML}{f0f8ff}
+
+\pgfdeclarelayer{background}
+\pgfdeclarelayer{foreground}
+\pgfsetlayers{background,main,foreground}
+
+\definecolor{input}{HTML}{b2e684}
+\definecolor{parameter}{HTML}{e38e48}
+\definecolor{compute}{HTML}{df7162}
+
+\tikzset{
+  flow/.style={-{Triangle[length=4, width=4]}, draw=red!70!black, thick, shorten >= -1},
+  biflow/.style={flow, {Triangle[length=6, width=6]}-{Triangle[length=6, width=6]}},
+  link/.style={->, draw},
+  ptr/.style={->, dashed},
+  leafl/.style={-, thick},
+  external/.style={draw=black, fill=brown!20},
+  internal/.style={inner sep=10, draw=black, fill=unibzblue!20},
+  build/.style={inner sep=10, draw=black, fill=unibzblue!40},
+  mixed/.style={inner sep=8.7, draw=black, path picture={
+    \fill[brown!20] (path picture bounding box.south west)
+      rectangle ($(path picture bounding box.north west)!.675!(path picture bounding box.north east)$);
+    \fill[unibzblue!40] ($(path picture bounding box.north west)!.675!(path picture bounding box.north east)$)
+      rectangle (path picture bounding box.south east);
+  }},
+  block/.style={rounded corners, draw=unibzblue, fill=unibzblue2, thick, 
+      minimum width=15mm, minimum height=5mm, align=center, inner sep=2},
+  small/.style={circle, draw=purple!60, fill=purple!20, thick, 
+      minimum width=3mm, minimum height=3mm, align=center},
+  conv/.style={rectangle, draw=blue!60, fill=blue!20, thick, 
+      minimum width=15mm, minimum height=5mm, align=center, inner sep=2},
+  op/.style={rounded corners, draw=green!60, fill=green!20, thick, 
+      minimum width=13mm, minimum height=5mm, align=center, inner sep=2},
+  pool/.style={rectangle, draw=red!60, fill=red!20, thick, 
+      minimum width=15mm, minimum height=5mm, align=center, inner sep=2},
+  dropout/.style={rectangle, draw=gray!60, fill=gray!20, thick, 
+      minimum width=12mm, minimum height=5mm, align=center, inner sep=2},
+  >=Latex, node distance=1, every node/.style={font=\footnotesize, inner sep=0}
+}

@@ -22,8 +22,8 @@ In many application multiple targets must be tracked at the same time. To unders
 
 After an association measure has been established, it is still necessary to actually perform the association \parencite[p. 136-140]{Lanz2026Notes}. A naive approach can be to consider all detections within some gating area of the prediction and then associate the closest of these detections to the prediction. The distance in this context can also consider the probabilistic model of the prediction to find most likely detections. However, this nearest neighbor approach can easily fail due to ambiguities. A better approach it to use a bipartite graph matching based framework. In this framework, the problem is modeled as a bipartite graph from predictions to detections, with edges weighted by the association metric. This can be formulated as the following integer linear programming problem:
 \begin{align*}
-    & \operatorname*{argmax}_{\mathbf{Z}} \sum_{i=1}^{M} \sum_{j=1}^{N} s_{ij} z_{ij} \\
-    & s.t. \quad \forall j: \sum_{i=1}^{M} z_{ij} = 1 \quad \forall i: \sum_{j=1}^{N} z_{ij} = 1 \quad z_{ij} \in \{0, 1\}
+  & \operatorname*{argmax}_{\mathbf{Z}} \sum_{i=1}^{M} \sum_{j=1}^{N} s_{ij} z_{ij} \\
+  & s.t. \quad \forall j: \sum_{i=1}^{M} z_{ij} = 1 \quad \forall i: \sum_{j=1}^{N} z_{ij} = 1 \quad z_{ij} \in \{0, 1\}
 \end{align*}
 where $s_{ij}$ and $z_{ij}$ are respectively the association metric and association between prediction $i$ and detection $j$. This problem can then be solved either using a greedy algorithm, or as has been done for this project, using globally optimal algorithms like the Hungarian method. Finally, another possible approach to association is to used advanced graph-based deep learning networks.
 
@@ -31,20 +31,20 @@ After detections and objects have been associated, it is still necessary to perf
 
 In Bayesian filtering is applied in two phases. First, the prediction step is used to model the target states distribution using only the past observations. Due to the conditional independence assumption of the hidden Markov model, this probability distribution of the hidden state can be computed as followed:
 \begin{align*}
-    p(\mathbf{x}_t|\mathbf{z}_{1:t-1}) &= \int p(\mathbf{x}_t, \mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
-    &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}, \mathbf{z}_{1:t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
-    &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1}
+  p(\mathbf{x}_t|\mathbf{z}_{1:t-1}) &= \int p(\mathbf{x}_t, \mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
+  &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}, \mathbf{z}_{1:t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1} \\
+  &= \int p(\mathbf{x}_t | \mathbf{x}_{t-1}) p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1}) d\mathbf{x}_{t-1}
 \end{align*}
 where $p(\mathbf{x}_t | \mathbf{x}_{t-1})$ defines out motion model, and $p(\mathbf{x}_{t-1} | \mathbf{z}_{1:t-1})$ is the posterior distribution after applying all previous observations. After prediction, we want to incorporate the information gained by the new observation. This can be achieved as follows by applying Bayes' rule:
 \begin{align*}
-    p(\mathbf{x}_t \mid \mathbf{z}_{1:t}) &\propto p(\mathbf{z}_t \mid \mathbf{x}_t) p(\mathbf{x}_t \mid \mathbf{z}_{1:t-1})
+  p(\mathbf{x}_t \mid \mathbf{z}_{1:t}) &\propto p(\mathbf{z}_t \mid \mathbf{x}_t) p(\mathbf{x}_t \mid \mathbf{z}_{1:t-1})
 \end{align*}
 where $p(\mathbf{z}_t \mid \mathbf{x}_t)$ models the observation process.
 
 The equations of the Bayesian filtering algorithm can be implemented by representing the probability distributions as each time stem in parametric form, such as in Kalman filtering \parencite[p. 132-134]{Lanz2026Notes}, or in nonparametric form, such as with particle filters. In a linear Kalman filter the motion and observation models are defined as:
 \begin{align*}
-    \mathbf{x}_t &= \mathbf{F}_t \mathbf{x}_{t-1} + \mathbf{B}_t \mathbf{u}_t + \mathbf{w}_t, \quad \mathbf{w}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{Q}_t) \\
-    \mathbf{z}_t &= \mathbf{H}_t\mathbf{x}_t + \mathbf{v}_t, \quad \mathbf{v}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{R}_t)
+  \mathbf{x}_t &= \mathbf{F}_t \mathbf{x}_{t-1} + \mathbf{B}_t \mathbf{u}_t + \mathbf{w}_t, \quad \mathbf{w}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{Q}_t) \\
+  \mathbf{z}_t &= \mathbf{H}_t\mathbf{x}_t + \mathbf{v}_t, \quad \mathbf{v}_t \sim \mathcal{N}(\mathbf{0}, \mathbf{R}_t)
 \end{align*}
 The optimal closed-form solution is the standard Kalman Filter, which updates the mean $\mathbf{\bar{x}}_t$ and covariance $\Sigma_t$ of $\mathbf{x}_t$ through linear projection and gain computation.
 
@@ -55,11 +55,11 @@ h(\mathbf{x}_t) \approx h(\mathbf{\bar{x}}_t) + \mathbf{J}_h (\mathbf{x}_t - \ma
 where $\mathbf{J}_h$ is the Jacobian matrix evaluated at $\mathbf{\bar{x}}_t$. In the update step the Jacobian matrix is the used in place of the linear observation matrix $\mathbf{H}_t$ to update the covariance and calculate Kalman gain.
 
 
-\subsection{Projective Geometry and Camera Calibration} \label{calibration}
+\subsection{Projective Geometry} \label{calibration}
 
 The dataset used in this project already contains camera calibration parameters for all camera views. Still, understanding the meaning of these parameters and how they relate to the image formation process is critical for the correct implementation for the triangulation algorithm as well as for modeling the observation process. The mapping of 3D points to 2D pixels is defined mathematically through the pinhole camera model \parencite[p. 6-8]{Lanz2026Notes}. Unlike a physical pinhole camera, which would invert the image, the mathematical model places the image plane in front of the focal point for convenience. The full perspective projection model linking a homogenous 3D world coordinate $\tilde{x}_w$ to a homogenous 2D sensor pixel $\tilde{x}_s$ is given by:
 \begin{align*}
-    \tilde{x}_s &= \mathbf{K} [\mathbf{R} | \mathbf{t}] \tilde{x}_w = \mathbf{P} \tilde{x}_w
+  \tilde{x}_s &= \mathbf{K} [\mathbf{R} | \mathbf{t}] \tilde{x}_w = \mathbf{P} \tilde{x}_w
 \end{align*}
 where $\mathbf{P}$ is the full $3 \times 4$ projection matrix. It decomposes into intrinsic parameters $\mathbf{K}$ and extrinsic parameters $\mathbf{R} and \mathbf{t}$. For a perspective projection, 3D points $\tilde{x}_s$ in the local camera coordinate system are mapped to the image plane by dividing them by their depth $Z$ component.
 
@@ -68,8 +68,10 @@ The assumption of linear projection made by the above pinhole camera model, wher
 
 \subsection{Multi-View Triangulation} \label{triangulate}
 
-Even once corresponding points across multiple camera views have been identified, their 3D position $\tilde{x}_w$ must still be reconstructed from the 2D pixel locations. Rays back-projected from pixels will nearly never intersect perfectly in 3D space due to measurement noise. As such, a noise robust algorithm must be used that can recover 3D coordinates using multiple noise 2D projections \parencite[p. 16-17]{Lanz2026Notes}. If we denote $\tilde{x}_i^s$ the homogeneous 2D observation in the $i$-th camera, and $\mathbf{P}_i$ the projection matrix of that that camera, because $\tilde{x}_i^s$ and the projected point $\mathbf{P}_i \tilde{x}_w$ represent the same point up to scale, their cross product must be zero:
+Even once corresponding points across multiple camera views have been identified, their 3D position $\tilde{x}_w$ must still be reconstructed from the 2D pixel locations. Rays back-projected from pixels will nearly never intersect perfectly in 3D space due to measurement noise. As such, a noise robust algorithm must be used that can recover 3D coordinates using multiple noise 2D projections \parencite[p. 16-17]{Lanz2026Notes}. \Cref{fig:triangulate} illustrates this process. If we denote $\tilde{x}_i^s$ the homogeneous 2D observation in the $i$-th camera, and $\mathbf{P}_i$ the projection matrix of that that camera, because $\tilde{x}_i^s$ and the projected point $\mathbf{P}_i \tilde{x}_w$ represent the same point up to scale, their cross product must be zero:
 \begin{align*}
-    \tilde{x}_i^s \times \mathbf{P}_i \tilde{x}_w &= 0 \\
+  \tilde{x}_i^s \times \mathbf{P}_i \tilde{x}_w &= 0 \\
 \end{align*}
 This cross product yields a set of three linear equations for each camera view. However, the third is a linear combination of the first two, so it can be discarded. By stacking the equations from $N \ge 2$ camera views, we obtain a homogeneous linear system $\mathbf{A} \tilde{x}_w = 0$. Because $\tilde{x}_w$ is defined only up to scale, we impose the constraint $||\tilde{x}_w|| = 1$. The optimal least-squares solution to this system is found by computing the Singular Value Decomposition of $\mathbf{A}$ and taking the right singular vector associated with the smallest singular value. Alternatively, it is also possible to transform the homogeneous system in to an in-homogeneous system and solve it using standard least squares. This latter approach is taken in the project.
+
+\input{tikzfigures/triangulate.tex}
