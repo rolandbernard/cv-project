@@ -113,7 +113,7 @@ def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=15.0):
                     where=valid
                 )
         gt_ind, pred_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
-        current_gt_to_pred_map = {}
+        current_gt_to_pred_map = prev_gt_to_pred_map.copy()
         matches = 0
         for g, p in zip(gt_ind, pred_ind):
             mpjpe_errors += cost_matrix[g, p].item()
