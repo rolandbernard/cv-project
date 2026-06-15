@@ -91,6 +91,22 @@ where $\mathbf{X}_{3D}$ is the triangulated 3D point from the $K$ associated vie
 
 To prevent spurious detections from creating false tracks, we manage the lifecycle of each track using a state machine. New tracks that have just been added via triangulation of detections start out as tentative tracks.  If a tentative track is not matched to at least one detection in the next frame, it is deleted immediately. Once a tentative track have been observed for $\ge N_{age}$ consecutive frames, it is promoted to an active tracks. Active tracks are more robust to occasional missing detections. If an active track is not observed, its state is updated only using the Kalman filter prediction step. However, if it remains unmatched for more than $N_{inv}$ consecutive frames, it is deleted.
 
+\begin{table*}[!ht]
+  \centering
+  \begin{tabular}{|r|r|c|c|c|c|c|c|c|}
+  \hline
+    Model & \# Cameras & Detection & Matching & EKF Update & EKF Prediction & Total \\ \hline
+    \multirow{4}{*}{YOLO26n-pose}  & 4 & 0.0450 & 0.0168 & 0.0086 & 0.0005 & 0.0710 \\ \cline{2-7}
+      & 8 & 0.0845 & 0.0313 & 0.0136 & 0.0006 & 0.1302 \\ \cline{2-7}
+      & 12 & 0.1306 & 0.0426 & 0.0174 & 0.0006 & 0.1915 \\ \cline{2-7}
+      & 16 & 0.1769 & 0.0563  & 0.0223 & 0.0007 & 0.2563 \\ \hline \hline
+    YOLO26s-pose & 4 & 0.0869 & 0.0179 & 0.0089 & 0.0005 & 0.1145 \\ \hline
+    YOLO26m-pose & 4 & 0.2493 & 0.0176 & 0.0088 & 0.0005 & 0.2764 \\ \hline
+    YOLO26l-pose & 4 & 0.2629 & 0.0177 & 0.0089 & 0.0005 & 0.2901 \\ \hline
+  \end{tabular}
+  \caption{Average per-frame runtime of the tracking system for different camera and model configurations. Times are given in seconds.}
+  \label{fig:perf}
+\end{table*}
 
 \subsection{Evaluation Procedure} \label{eval-proc}
 

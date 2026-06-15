@@ -1,30 +1,4 @@
 
-\section{Results and Discussion} \label{results}
-
-This section of the report will present the evaluation results obtained by the developed system on the chosen dataset. It further contains also discussion of the presented results and possible reasons for the observed deficiencies.
-
-\subsection{Runtime Efficiency} \label{effic}
-
-
-\begin{table*}[!ht]
-  \centering
-  \begin{tabular}{|r|r|c|c|c|c|c|c|c|}
-  \hline
-    Model & \# Cameras & Detection & Matching & EKF Update & Prediction & Total \\ \hline
-    \multirow{4}{*}{YOLO26n-pose}  & 4 & 0.0450 & 0.0168 & 0.0086 & 0.0005 & 0.0710 \\ \cline{2-7}
-      & 8 & 0.0845 & 0.0313 & 0.0136 & 0.0006 & 0.1302 \\ \cline{2-7}
-      & 12 & 0.1306 & 0.0426 & 0.0174 & 0.0006 & 0.1915 \\ \cline{2-7}
-      & 16 & 0.1769 & 0.0563  & 0.0223 & 0.0007 & 0.2563 \\ \hline \hline
-    YOLO26s-pose & 4 & 0.0869 & 0.0179 & 0.0089 & 0.0005 & 0.1145 \\ \hline
-    YOLO26m-pose & 4 & 0.2493 & 0.0176 & 0.0088 & 0.0005 & 0.2764 \\ \hline
-    YOLO26l-pose & 4 & 0.2629 & 0.0177 & 0.0089 & 0.0005 & 0.2901 \\ \hline
-  \end{tabular}
-  \caption{Average per-frame runtime of the tracking system for different camera and model configurations. Times are given in seconds.}
-  \label{fig:perf}
-\end{table*}
-
-
-\subsection{Quantitative Results} \label{quant}
 
 \begin{table*}[!ht]
   \centering
@@ -58,8 +32,19 @@ This section of the report will present the evaluation results obtained by the d
   \label{fig:eval-by-scene}
 \end{table*}
 
+\section{Results and Discussion} \label{results}
 
-\subsection{Qualitative Results} \label{qual}
+This section of the report will present the evaluation results obtained by the developed system on the chosen dataset. It further contains also discussion of the presented results and possible reasons for the observed deficiencies.
+
+\subsection{Runtime Efficiency} \label{effic}
+
+\Cref{fig:perf} shows the mean per-frame runtime of the developed tracking system across the selected test sequences for different camera count and model capacity configurations. It can be seen that across every single configuration, the detection step consumes the vast majority of the processing time. For the base setup with YOLO26n-pose and 4 camera vies, detection takes 0.0450 seconds out of a 0.0710-second total which equals approximately 63\% of the frame time. This discrepancy becomes wider when increasing the model capacity. For the larges model, YOLO26l-pose, still with only 4 cameras, the detection takes up to 0.2629 seconds out of a total of 0.2901 seconds, which represents approximately 91\% of the time.
+
+When adding more camera views to the system using the smallest model, the computational load predictably increases. Because the detection model has to run a forward pass on every single camera feed, detection time scales almost perfectly linearly with the number of cameras, from 0.045s for 4 cameras to 0.177s for 16. Steps like matching and EKF updates also scale up as camera counts increase because these need to handle more cross-camera data points to associate and filter. However, their growth is somewhat slower than the linear increase for detection. The EKF prediction step is largely a negligible part of the overall system runtime.
+
+When keeping the camera count at 4 but upgrading the YOLO architecture to larger capacity version, it can be observed that the cost increases significantly. Upgrading from YOLO26n-pose to YOLO26s-pose doubles the detection time, going from 0.0450s to 0.0869s. However, jumping to Medium (m) or Large (l) causes a massive spike, tripling the time to over a quarter of a second. Predictably, only the runtime for the detection step is affected by increasing the model capacity and matching, EKF update, and Prediction remain almost entirely unchanged across all four model variants.
+
+With the fastest configuration tested, the system achieves only around 14.1 fps. This is likely insufficient for real-time applications. However, it should be noted that not much effort has gone into optimization of the implementation, and that the test where performed on relatively weak integrated GPU hardware.
 
 \begin{figure*}[ht!]
   \centering
@@ -96,3 +81,27 @@ This section of the report will present the evaluation results obtained by the d
   \label{fig:qual}
 \end{figure*}
 
+\subsection{Quantitative Results} \label{quant}
+
+Quantitative results for the system on the chosen test sequences can be found in \cref{fig:eval-results}. When keeping the model fixed to YOLO26n-pose and increasing the number of cameras from 4 to 16, a significant reduction in pose and localization errors can be observed. The joint position error decreases drastically by about half, from 5.381 down to 2.659. Similarly, tracking misalignment improves from 4.877 down to 2.583. This indicates that incorporating more viewpoints substantially improves 3D localization and pose estimation accuracy. Also, the increase in camera views brings improvements in recall. Recall increases from 0.850 with 4 cameras and plateaus at 0.868 from 8 cameras onwards, indicating fewer missed detections likely because the cameras now cover more angles that would otherwise not be visible. There exists a slight trade-off in tracking accuracy and precision. Adding more cameras leads to a minor decrease in MOTA, from 0.825 down to 0.818, and Precision, from 0.970 down to 0.954. This can be explained by the fact that more camera views introduce a higher likelihood of false positives.
+
+In contrast, when keeping the camera count fixed at 4 and scaling up the model complexity from YOLO26n-pose to YOLO26l-pose, we see improvements in all metrics. The largest model achieves the best overall MOTA of 0.831 and Precision of 0.972 across the entire dataset. Upgrading the model capacity also reduces MOTP from 4.877 to 4.189 and MPJPE from 5.381 to 4.548. However, the improvement in these metrics is not as significant as with the addition of more cameras.
+
+Finally, \cref{fig:eval-by-scene} shows the average performance for 4 camera views across all model capacities. It can be seen that the \inlinecode{161029_build1} scene is by far the one with the lowest performance metrics. In this scene, MOTP and Recall suffer from a large increase in false negatives. This is caused by heavy occlusions in this particular scene. The system performs particularly well on \inlinecode{161029_piano4} and \inlinecode{170915_office1}. This is largely because in these scenes the persons are in the room for the entire duration of the video sequence, avoiding a big source of errors for the system that is when persons leave or exit the room.
+
+
+\subsection{Qualitative Results} \label{qual}
+
+Some qualitative evaluation has also been performed for this project. The results of the system on the tests sequences has been visualized and a number of common issues have been identified. Some examples of these failure modes are shown in \cref{fig:qual}.
+
+\paragraph{Partially Occluded Person}
+One very common failure mode is depicted in \cref{fig:qual-occlusion}. When a person is partially occluded in all camera views, then the position of the unobserved keypoints tends to shift in unnatural ways, as can be seen with the legs keypoints in the given example. This problem is made worse by the fact that the YOLO model tend to predict invisible keypoints in unnatural positions, and while their visibility score is low, it can still commutatively have a significant effect over multiple frames. This issue causes increased joint position errors.
+
+\paragraph{Inactive Track Seen by Only One Camera}
+Another commonly observed failure is shown in \cref{fig:qual-single}. When a person first enters the room, typically only one camera can see them. This means that it is not possible to create a new track for that person. This causes false positives, and therefore reduced MOTA and Recall, whenever a person enters the room.
+
+\paragraph{Active Track Seen by Only One Camera}
+\Cref{fig:qual-single2} shows another issue that can occur when only a single camera is able to see a given person. In this case, the track has already been initialized, but the person has moved into a location where they are no longer seen by two cameras. In this case the depth coordinate from the camera can drift as the person moves, causing distorted skeletons before and behind the actual ground truth.
+
+\paragraph{Detection of Person While Exiting}
+\Cref{fig:qual-leave} show a failure that occurs when a person leaves the room. In this case, the camera that is pointing at the exit will see the person for longer than the actual ground truth indicates. This causes false positives and therefore worse MOTA and Precision. Note that in this case we also have the above mention issue of an active track seen by only one camera.
