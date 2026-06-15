@@ -7,17 +7,34 @@ This section of the report will detail the architectures of the tracking system 
 
 \subsection{System Architecture} \label{arch}
 
-This subsection will go into detail about the internal implementation of the tracking system.
+This subsection will go into detail about the internal implementation of the tracking system. \Cref{fig:architecture} show the overall pipeline used in this projects tracking algorithm.
 
 \subsubsection{Overview} \label{arch-overview}
 
-\subsubsection{2D Detections} \label{arch-detect}
+The core of the tracking pipeline runs a recursive estimation loop on incoming multi-view video frames. The input to the system is a number of synchronized multi-view video feeds, and the final result is a 3D representation of the skeletal joint of each person in the scene.
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
+First, multi-view videos are passed through the YOLO detection network, yielding 2D bounding boxes and keypoints. Concurrently, the tracking module predicts the current 3D state of all previously known tracks based on continuous physics models. The keypoints of the predicted tracks are projected into the 2D camera planes and matched against the newly observed 2D detections. Detections matched to existing tracks trigger an extended Kalman filer update for the matched track to refine its 3D state. Unmatched, novel 2D detections matched between views, and if at least two views contain the new target, triangulated to instantiate new 3D tracks. Finally, updated tracks and newly created tracks are merged, and the loop repeats for the next timestamp.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
+\subsubsection{2D Detections and Uncertainty Estimation} \label{arch-detect}
 
-\subsubsection{Kalman Filter} \label{arch-filter}
+During inference, images from each active camera view are batched and passed to the YOLO26-pose detector using PyTorch. The detector outputs 2D keypoint positions along with visibility confidence scores $c_k \in [0, 1]$. However, for performing the Kalman filter updates we need a probabilistic framework in which we model the prediction uncertainty as Gaussian noise. This need can not be satisfied by the confidence score alone. To estimate the measurement noise covariance dynamically from the outputs of the YOLO model, the system relies on bounding box and visibility scaling. The variance $\sigma_k^2$ for each detected keypoint $k$ is computed dynamically based on the bounding box magnitude and the joint visibility confidence. The specific formulation used is:
+\begin{align*}
+    \sigma_k^2 &= \sigma_{min}^2 + d_{bb}^2 \cdot \left( \frac{\sigma_{vis}^2}{\max(0, \bar{c}_k) + \frac{\sigma_{vis}^2}{\sigma_{inv}^2}} \right)
+\end{align*}
+where $\bar{c}_k = \frac{c_k - \tau_{kpt}}{1.0 - \tau_{kpt}}$ is the confidence score normalized above the tuned keypoint threshold $\tau_{kpt}$, $d_{bb}^2$ is the length of the diagonal of the bounding box, and $\sigma_{min}, \sigma_{vis}, \sigma_{inv}$ are tuning parameters specifying respectively the minimum variance, minimum bounding box dependent variance, and maximum bounding box dependent variance. This ensures that occluded joints are appropriately penalized with high uncertainty while visible joint get a lower variance. The keypoint detections are assumed to all be independent, so the final measurement noise covariance matrix is build by filling the diagonals.
+
+Further, before passing the resulting 2D keypoints to the rest of the tracking system, the 2D pixel coordinates are transformed into normalized camera coordinates utilizing the camera intrinsics and distortion coefficients as follows:
+\begin{align*}
+    \mathbf{x}_{pixel} &= \begin{bmatrix} u \\ v \end{bmatrix} \xrightarrow{\mathbf{K}^{-1}} \mathbf{x}_{distorted} \xrightarrow{\text{Iterative Undistortion}} \mathbf{x}_{normalized}
+\end{align*}
+To maintain consistent uncertainty representation, we also transform the observation covariance matrix $\Sigma_{pixel}$ for the 17 keypoints into normalized space using the following approximation:
+\begin{align*}
+    \Sigma_{norm} &\approx K^{-1} \Sigma_{pixel} K^{-T}
+\end{align*}
+The main motivation behind this approach is that it simplifies the triangulation for new tracks as well as the observation process modeling in the Kalman filter update for old tracks by removing the non-linear distortion effects. As an additional benefit, it becomes more efficient to compute not only the Kalman filter updates but also the computation of cost matrices for the association step, which need to perform projection from the internal 3D state.
+
+
+\subsubsection{State Representation and Kalman Filtering} \label{arch-filter}
 
 Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
 
