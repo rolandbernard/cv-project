@@ -23,8 +23,8 @@ submission*
 *.log
 *.lof
 *.lot
-*.bbl
-*.bcf
+*.bbl*
+*.bcf*
 *.blg
 *.xmpi
 *.run.xml
