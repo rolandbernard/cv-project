@@ -3,8 +3,60 @@
 
 This section of the report will present the evaluation results obtained by the developed system on the chosen dataset. It further contains also discussion of the presented results and possible reasons for the observed deficiencies.
 
+\subsection{Runtime Efficiency} \label{effic}
+
+
+\begin{table*}[!ht]
+  \centering
+  \begin{tabular}{|r|r|c|c|c|c|c|c|c|}
+  \hline
+    Model & \# Cameras & Detection & Matching & EKF Update & Prediction & Total \\ \hline
+    \multirow{4}{*}{YOLO26n-pose}  & 4 & 0.0450 & 0.0168 & 0.0086 & 0.0005 & 0.0710 \\ \cline{2-7}
+      & 8 & 0.0845 & 0.0313 & 0.0136 & 0.0006 & 0.1302 \\ \cline{2-7}
+      & 12 & 0.1306 & 0.0426 & 0.0174 & 0.0006 & 0.1915 \\ \cline{2-7}
+      & 16 & 0.1769 & 0.0563  & 0.0223 & 0.0007 & 0.2563 \\ \hline \hline
+    YOLO26s-pose & 4 & 0.0869 & 0.0179 & 0.0089 & 0.0005 & 0.1145 \\ \hline
+    YOLO26m-pose & 4 & 0.2493 & 0.0176 & 0.0088 & 0.0005 & 0.2764 \\ \hline
+    YOLO26l-pose & 4 & 0.2629 & 0.0177 & 0.0089 & 0.0005 & 0.2901 \\ \hline
+  \end{tabular}
+  \caption{Average per-frame runtime of the tracking system for different camera and model configurations. Times are given in seconds.}
+  \label{fig:perf}
+\end{table*}
+
+
 \subsection{Quantitative Results} \label{quant}
 
+\begin{table*}[!ht]
+  \centering
+  \begin{tabular}{|r|r|c|c|c|c|c|}
+  \hline
+    Model & \# Cameras & MOTA & MOTP & MPJPE & Precision & Recall \\ \hline
+    \multirow{4}{*}{YOLO26n-pose} & 4 & 0.825 & 4.877 & 5.381 & 0.970 & 0.850 \\ \cline{2-7}
+      & 8 & 0.824 & 2.952 & 3.012 & 0.959 & 0.868 \\ \cline{2-7}
+      & 12 & 0.823 & 2.865 & 2.927 & 0.959 & 0.868 \\ \cline{2-7}
+      & 16 & 0.818 & \textbf{2.583} & \textbf{2.659} & 0.954 & \textbf{0.868} \\ \hline \hline
+    YOLO26s-pose & 4 & 0.826 & 5.033 & 5.583 & 0.970 & 0.853 \\ \hline
+    YOLO26m-pose & 4 & 0.825 & 4.864 & 5.546 & 0.970 & 0.853 \\ \hline
+    YOLO26l-pose & 4 & \textbf{0.831} & 4.189 & 4.548 & \textbf{0.972} & 0.856 \\ \hline
+  \end{tabular}
+  \caption{Evaluation results for different camera and model configurations. MOTA, MOTP, Precision, and Recall have been computed with an average of 15 centimeters Euclidean distance as the matching threshold. MOTP and MPJPE are given as mean per-joint Euclidean distance in centimeters. The best result in each column is highlighted in bold.}
+  \label{fig:eval-results}
+\end{table*}
+
+\begin{table*}[!ht]
+  \centering
+  \begin{tabular}{|r|c|c|c|c|c|}
+  \hline
+    Scene & MOTA & MOTP & MPJPE & Precision & Recall \\ \hline
+    \inlinecode{160224_haggling1} & 0.882 & 4.87 & 6.498 & 0.928 & 0.956 \\ \hline
+    \inlinecode{161029_build1} & 0.446 & 5.069 & 5.493 & 0.969 & 0.461 \\ \hline
+    \inlinecode{161029_piano4} & 0.987 & 4.166 & 4.166 & 0.987 & 1.000 \\ \hline
+    \inlinecode{170915_office1} & 0.992 & 4.858 & 4.901 & 0.997 & 0.995 \\ \hline
+    \inlinecode{171204_pose6} & 0.967 & 4.736 & 4.865 & 0.980 & 0.987 \\ \hline
+  \end{tabular}
+  \caption{Evaluation results for different scenes collected for 4 cameras and averaged over all model capacities. Evaluation metrics have been calculates as in \cref{fig:eval-results}.}
+  \label{fig:eval-by-scene}
+\end{table*}
 
 
 \subsection{Qualitative Results} \label{qual}
