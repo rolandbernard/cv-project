@@ -106,15 +106,21 @@
 \end{frame}
 
 \begin{frame}
-\frametitle{Task -- Human Pose Estimation}
+\frametitle{Introduction}
   \begin{items}
     \begin{oitem}{\litem}
-      Given: \\
-      \sitem {\footnotesize Multiple video sequences containing multiple people.} \\
-      \sitem {\footnotesize Recorded using multiple calibrated cameras.}
+      Problem: {\footnotesize Multiple video sequences containing multiple people.}
     \end{oitem}
     \begin{oitem}{\litem}
-      Reconstruct: \\
+      Possible Applications: \\
+      {\footnotesize Multiple video sequences containing multiple people.} \\
+      {\footnotesize Multiple video sequences containing multiple people.} \\
+      {\footnotesize Multiple video sequences containing multiple people.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Task Formulation: \\
+      \sitem {\footnotesize 3D coordinates of skeletal joint for each subject.} \\
+      \sitem {\footnotesize 3D coordinates of skeletal joint for each subject.} \\
       \sitem {\footnotesize 3D coordinates of skeletal joint for each subject.} \\
       \sitem {\footnotesize Movement of skeletal joint over time.}
     \end{oitem}
@@ -127,31 +133,112 @@
 \end{frame}
 
 \begin{frame}
-\frametitle{How am I trying to solve it?}
+\frametitle{Task Formulation}
   \begin{items}
     \begin{oitem}{\litem}
-      Summary: \\
-      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
-      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.} \\
-      \sitem {\footnotesize Apply Kalman filtering to smooth out noise.}
+      Given: {\footnotesize Multiple video sequences containing multiple people.}
     \end{oitem}
+    \begin{oitem}{\litem}
+      Output: \\
+      {\footnotesize Multiple video sequences containing multiple people.} \\
+      {\footnotesize Multiple video sequences containing multiple people.} \\
+      {\footnotesize Multiple video sequences containing multiple people.}
+    \end{oitem}
+    \vspace*{2mm}
     \begin{figure}
       \centering
-      \includegraphics[width=\linewidth]{figures/approach.pdf}
+      \includegraphics[width=0.9\linewidth]{figures/introduction.pdf}
     \end{figure}
   \end{items}
 \end{frame}
 
 \begin{frame}
-\frametitle{What makes this difficult?}
+\frametitle{System Architecture -- Overview}
   \begin{items}
     \begin{oitem}{\litem}
-      Challenges: \\
+      Summary: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{System Architecture -- 2D Detections}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Summary: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{System Architecture -- Kalman Filtering}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Summary: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{System Architecture -- Data Association}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Summary: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Dataset Overview}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Source:: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Format and Data Characteristics: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.} \\
+      \sitem {\footnotesize Apply Kalman filtering to smooth out noise.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Experimental Setup}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Setup: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.} \\
+      \sitem {\footnotesize Apply Kalman filtering to smooth out noise.}
+    \end{oitem}
+    \begin{oitem}{\litem}
+      Evaluation Metrics: \\
+      \sitem {\footnotesize Perform single-view single-frame 2D estimation using pretrained model.} \\
+      \sitem {\footnotesize Reconstruct 3D geometry from multiple camera views via triangulation.} \\
+      \sitem {\footnotesize Apply Kalman filtering to smooth out noise.}
+    \end{oitem}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Quantitative Results -- Runtime Efficiency}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Main Finding: \\
       \sitem {\footnotesize Occlusions can make some joints unobserved.} \\
       \sitem {\footnotesize Matching predictions between multiple views.} \\
-      \sitem {\footnotesize Matching predictions across time.} \\
-      \sitem {\footnotesize Noisy 2D estimates make the above more difficult.} \\
-      \sitem {\footnotesize 2D pose estimator often misses some people.}
+      \sitem {\footnotesize Matching predictions across time.}
     \end{oitem}
     \begin{figure}
       \centering
@@ -161,17 +248,46 @@
 \end{frame}
 
 \begin{frame}
-\frametitle{Current Approach -- Extended Kalman Filter}
+\frametitle{Quantitative Results -- Performance vs. Model Size}
   \begin{items}
     \begin{oitem}{\litem}
-      Summary: \\
+      Main Finding: \\
+      \sitem {\footnotesize Occlusions can make some joints unobserved.} \\
+      \sitem {\footnotesize Matching predictions between multiple views.} \\
+      \sitem {\footnotesize Matching predictions across time.}
+    \end{oitem}
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{figures/difficulties.png}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Quantitative Results -- Performance vs. Camera Count}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Main Finding: \\
+      \sitem {\footnotesize Occlusions can make some joints unobserved.} \\
+      \sitem {\footnotesize Matching predictions between multiple views.} \\
+      \sitem {\footnotesize Matching predictions across time.}
+    \end{oitem}
+    \begin{figure}
+      \centering
+      \includegraphics[width=\linewidth]{figures/difficulties.png}
+    \end{figure}
+  \end{items}
+\end{frame}
+
+\begin{frame}
+\frametitle{Qualitative Results}
+  \begin{items}
+    \begin{oitem}{\litem}
+      Visual Observations: \\
       \sitem {\footnotesize Keep internal 3D state of all currently tracked persons.} \\
       {\footnotesize Repeat for each frame:} \\
       \sitem {\footnotesize Predict next frame state using current state.} \\
-      \sitem {\footnotesize Match predictions with detections.} \\
-      \quad \sitem {\footnotesize Update internal 3D state using detections.} \\
-      \sitem {\footnotesize Associate unmatched detections between views.} \\
-      \quad \sitem {\footnotesize Create new internal state using triangulation.}
+      \sitem {\footnotesize Match predictions with detections.}
     \end{oitem}
     \begin{figure}
       \centering
@@ -181,23 +297,29 @@
 \end{frame}
 
 \begin{frame}
-\frametitle{What to do next?}
+\frametitle{Conclusion}
   \begin{items}
     \begin{oitem}{\litem}
-      Learn filter parameters from data. \\
-      \sitem {\footnotesize Currently, just guessed manually.}
+      Summary: \\
+      \sitem {\footnotesize Implemented an EKF framework that merges multi-view observations.} \\
+      \sitem {\footnotesize Analyzed performance across different model sizes and camera densities.}
     \end{oitem}
     \begin{oitem}{\litem}
-      Add constraint that forces consistency of joint lengths. \\
-      \sitem {\footnotesize To improve results if person is partially occluded.}
+      Limitations: \\
+      \sitem {\footnotesize Struggles significantly with occlusions.} \\
+      \sitem {\footnotesize Running 2D pose estimation on every camera view remains a performance bottleneck.}
     \end{oitem}
     \begin{oitem}{\litem}
-      Try using a particle filter with occlusion aware likelihood. \\
-      \sitem {\footnotesize More expressive than Kalman filter.} \\
-      \sitem {\footnotesize Could accurately model occlusions.}
+      Possible Future Improvements: \\
+      \sitem {\footnotesize Data-driven learning filter parameters.} \\
+      \sitem {\footnotesize Add constraints that force anatomical consistency of joints.}\\
+      \sitem {\footnotesize Fine-tuning of the 2D pose estimation model.} \\
+      \sitem {\footnotesize Integration of monocular depth estimation.} \\
+      \sitem {\footnotesize Use of a particle filter with occlusion aware likelihood.}
     \end{oitem}
   \end{items}
 \end{frame}
+
 
 {
 \setbeamercolor{background canvas}{bg=black}
