@@ -17,7 +17,7 @@ First, multi-view videos are passed through the YOLO detection network, yielding
 
 \subsubsection{2D Detections and Uncertainty Estimation} \label{arch-detect}
 
-During inference, images from each active camera view are batched and passed to the YOLO26-pose detector using PyTorch. The detector outputs 2D keypoint positions along with visibility confidence scores $c_k \in [0, 1]$. However, for performing the Kalman filter updates we need a probabilistic framework in which we model the prediction uncertainty as Gaussian noise. This need can not be satisfied by the confidence score alone. To estimate the measurement noise covariance dynamically from the outputs of the YOLO model, the system relies on bounding box and visibility scaling. The variance $\sigma_k^2$ for each detected keypoint $k$ is computed dynamically based on the bounding box magnitude and the joint visibility confidence. The specific formulation used is:
+During inference, images from each active camera view are batched and passed to the YOLO26-pose detector using PyTorch. The detector outputs 2D keypoint positions along with visibility confidence scores $c_k \in [0, 1]$. As a first filter we select only detections that have a confidence above $\tau_{obj}$. Further, we filter out any detections for which fewer than $N_{kpt}$ are visible with a confidence above $\tau_{kpt}$. However, for performing the Kalman filter updates we need a probabilistic framework in which we model the prediction uncertainty as Gaussian noise. This need can not be satisfied by the confidence score alone. To estimate the measurement noise covariance dynamically from the outputs of the YOLO model, the system relies on bounding box and visibility scaling. The variance $\sigma_k^2$ for each detected keypoint $k$ is computed dynamically based on the bounding box magnitude and the joint visibility confidence. The specific formulation used is:
 \begin{align*}
     \sigma_k^2 &= \sigma_{min}^2 + d_{bb}^2 \cdot \left( \frac{\sigma_{vis}^2}{\max(0, \bar{c}_k) + \frac{\sigma_{vis}^2}{\sigma_{inv}^2}} \right)
 \end{align*}
@@ -36,27 +36,47 @@ The main motivation behind this approach is that it simplifies the triangulation
 
 \subsubsection{State Representation and Kalman Filtering} \label{arch-filter}
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
+In the Kalman filter implementation of the project, the state for each person is tracked separately. The state vector is composed by modeling the human pose as a collection of 17 keypoints. The state vector $\mathbf{x} \in \mathbb{R}^{102}$ encapsulates the 3D coordinates and the 3D velocities for all 17 keypoints resulting in a state vector shaped as:
+\begin{align*}
+    \mathbf{x} &= \begin{bmatrix} \mathbf{p}_1^T, \; \dots, \; \mathbf{p}_{17}^T, \; \mathbf{v}_1^T, \; \dots, \; \mathbf{v}_{17}^T \end{bmatrix}^T
+\end{align*}
+where $\mathbf{p}_k = [x_k, y_k, z_k]^T \in \mathbb{R}^3$ and $\mathbf{v}_k = [\dot{x}_k, \dot{y}_k, \dot{z}_k]^T \in \mathbb{R}^3$ are the 3D position and velocity vectors for keypoint $k$.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
+The state dynamics are modeled by a continuous-time linear velocity process. The decision was made to specify the dynamics in the continuous domain in order to be able to handle variable frame rates which could for example arise due to frames being dropped during computationally more demanding scenes. The continuous dynamics matrix $\mathbf{F}$ and process noise $\mathbf{Q}$ are mapped to discrete time steps $\Delta t_i$ dynamically for each frame $i$ using a second-order Taylor expansion based approximation:
+\begin{align*}
+    \mathbf{F}_k &\approx \mathbf{I} + \mathbf{F} \Delta t_i + \frac{1}{2} \mathbf{F}^2 \Delta t_i^2 \\
+    \mathbf{Q}_k &\approx \mathbf{Q} \Delta t_i + \frac{1}{2} (\mathbf{F} \mathbf{Q} + \mathbf{Q} \mathbf{F}^T) \Delta t_i^2
+\end{align*}
 
-\subsubsection{Track Creation and Deletion} \label{arch-tracks}
+The measurement function $h_c(\mathbf{x}): \mathbb{R}^{102} \to \mathbb{R}^{34}$ acts as a non-linear pinhole projection mapping the 102-dimensional 3D state back to a 34-dimentional observation of 2D coordinates in camera $c$:
+\begin{align*}
+    h_c(\mathbf{x}) &= \begin{bmatrix} \pi_c(\mathbf{p}_1)^T & \pi_c(\mathbf{p}_2)^T & \dots & \pi_c(\mathbf{p}_{17})^T \end{bmatrix}^T
+\end{align*}
+where $\pi_c(\mathbf{p}_k)$ is the perspective pinhole projection of the 3D point into normalized camera coordinates:
+\begin{align*}
+    \pi_c(\mathbf{p}_k) &= \frac{1}{Z_{c,k}} \begin{bmatrix} X_{c,k} \\ Y_{c,k} \end{bmatrix} = \frac{1}{\mathbf{R}_{c,3} \mathbf{p}_k + t_{c,3}} \begin{bmatrix} \mathbf{R}_{c,1} \mathbf{p}_k + t_{c,1} \\ \mathbf{R}_{c,2} \mathbf{p}_k + t_{c,2} \end{bmatrix}
+\end{align*}
+Because multiple cameras observe the target simultaneously, the system concatenates these independent multi-camera views into a single centralized extended Kalman filter observation update instead of applying them sequentially. For a track observed by $M$ cameras the observations are merged as follows:
+\begin{align*}
+    \mathbf{z}_{merged} &= \begin{bmatrix} \mathbf{z}_1^T \vdots \mathbf{z}_M^T \end{bmatrix}^T \in \mathbb{R}^{34M} \\
+    \Sigma_{merged} &= \text{diag}(\Sigma_1, \dots, \Sigma_M) \in \mathbb{R}^{34M \times 34M}
+\end{align*}
+This formulation can handle asynchronous data naturally by simply omitting cameras without active detections.
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
+Because the projection mapping is non-linear, the extended Kalman filter requires the computation of the Jacobian $\mathbf{H}_i \in \mathbb{R}^{34M \times 102}$. Rather than deriving and hard-coding this computation analytically, the system leverages the automatic differentiation capabilities of PyTorch to compute the exact measurement Jacobian dynamically at runtime.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
 
 \subsubsection{Association of Detections to Tracks} \label{arch-assoc1}
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
 
 \subsubsection{Association Between Views} \label{arch-assoc2}
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
+
+\subsubsection{Track Creation and Deletion} \label{arch-tracks}
+
+To prevent spurious detections from creating false tracks, we manage the lifecycle of each track using a state machine. New tracks have just been added via triangulation of detections start out as tentative tracks.  If a tentative track is not matched to at least one detection in the next frame, it is deleted immediately. Once a tentative track have been observed for $\ge N_{age}$ consecutive frames, it is promoted to an active tracks. Active tracks are more robust to occasional missing detections. If an active track is not observed, its state is updated only using the Kalman filter prediction step. However, if it remains unmatched for more than $N_{inv}$ consecutive frames, it is deleted.
 
 
 \subsection{Evaluation Procedure} \label{eval-proc}
