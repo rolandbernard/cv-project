@@ -96,7 +96,9 @@ def evaluate_mot_metrics(gt_frames, pred_frames, dist_threshold=15.0):
     mpjpe_errors, mpjpe_count = 0, 0
     motp_errors = 0
     prev_gt_to_pred_map = {}
-    for idx in range(max(len(gt_frames), len(pred_frames))):
+    # Only go until the minium of gt and prediction since some videos are cut
+    # short before ground truth values end.
+    for idx in range(min(len(gt_frames), len(pred_frames))):
         frame_gt = gt_frames[idx] if idx < len(gt_frames) else {}
         frame_pred = pred_frames[idx] if idx < len(pred_frames) else {}
         total_gt_kpts += len(frame_gt)

@@ -5,13 +5,13 @@
   \begin{tabular}{|r|r|c|c|c|c|c|}
   \hline
     Model & \# Cameras & MOTA & MOTP & MPJPE & Precision & Recall \\ \hline
-    \multirow{4}{*}{YOLO26n-pose} & 4 & 0.825 & 4.877 & 5.381 & 0.970 & 0.850 \\ \cline{2-7}
-      & 8 & 0.824 & 2.952 & 3.012 & 0.959 & 0.868 \\ \cline{2-7}
-      & 12 & 0.823 & 2.865 & 2.927 & 0.959 & 0.868 \\ \cline{2-7}
-      & 16 & 0.818 & \textbf{2.583} & \textbf{2.659} & 0.954 & \textbf{0.868} \\ \hline \hline
-    YOLO26s-pose & 4 & 0.826 & 5.033 & 5.583 & 0.970 & 0.853 \\ \hline
-    YOLO26m-pose & 4 & 0.825 & 4.864 & 5.546 & 0.970 & 0.853 \\ \hline
-    YOLO26l-pose & 4 & \textbf{0.831} & 4.189 & 4.548 & \textbf{0.972} & 0.856 \\ \hline
+    \multirow{4}{*}{YOLO26n-pose} & 4 & 0.950 & 5.004 & 5.439 & 0.974 & 0.975 \\ \cline{2-7}
+      & 8 & \textbf{0.960} & 2.912 & 2.967 & 0.966 & 0.997 \\ \cline{2-7}
+      & 12 & 0.956 & 2.795 & 2.845 & 0.963 & 0.998 \\ \cline{2-7}
+      & 16 & 0.948 & \textbf{2.515} & \textbf{2.576} & 0.955 & \textbf{0.998} \\ \hline \hline
+    YOLO26s-pose & 4 & 0.953 & 4.957 & 5.427 & 0.974 & 0.979 \\ \hline
+    YOLO26m-pose & 4 & 0.954 & 4.745 & 5.318 & 0.975 & 0.980 \\ \hline
+    YOLO26l-pose & 4 & \textbf{0.960} & 4.252 & 4.554 & \textbf{0.977} & 0.983 \\ \hline
   \end{tabular}
   \caption{Evaluation results for different camera and model configurations. MOTA, MOTP, Precision, and Recall have been computed with an average of 15 centimeters Euclidean distance as the matching threshold. MOTP and MPJPE are given as mean per-joint Euclidean distance in centimeters. The best result in each column is highlighted in bold.}
   \label{fig:eval-results}
@@ -22,13 +22,13 @@
   \begin{tabular}{|r|c|c|c|c|c|}
   \hline
     Scene & MOTA & MOTP & MPJPE & Precision & Recall \\ \hline
-    \inlinecode{160224_haggling1} & 0.882 & 4.87 & 6.498 & 0.928 & 0.956 \\ \hline
-    \inlinecode{161029_build1} & 0.446 & 5.069 & 5.493 & 0.969 & 0.461 \\ \hline
-    \inlinecode{161029_piano4} & 0.987 & 4.166 & 4.166 & 0.987 & 1.000 \\ \hline
-    \inlinecode{170915_office1} & 0.992 & 4.858 & 4.901 & 0.997 & 0.995 \\ \hline
-    \inlinecode{171204_pose6} & 0.967 & 4.736 & 4.865 & 0.980 & 0.987 \\ \hline
+    \inlinecode{160224_haggling1} & 0.862 & 4.004 & 5.007 & 0.900 & 0.972 \\ \hline
+    \inlinecode{161029_build1} & 0.951 & 4.086 & 4.367 & 0.976 & 0.975 \\ \hline
+    \inlinecode{161029_piano4} & 0.998 & 3.395 & 3.395 & 0.998 & 1.000 \\ \hline
+    \inlinecode{170915_office1} & 0.993 & 4.151 & 4.178 & 0.996 & 0.997 \\ \hline
+    \inlinecode{171204_pose6} & 0.967 & 3.779 & 3.858 & 0.976 & 0.992 \\ \hline
   \end{tabular}
-  \caption{Evaluation results for different scenes collected for 4 cameras and averaged over all model capacities. Evaluation metrics have been calculates as in \cref{fig:eval-results}.}
+  \caption{Evaluation results for different scenes averaged over all performed evaluations. Evaluation metrics have been calculates as in \cref{fig:eval-results}.}
   \label{fig:eval-by-scene}
 \end{table*}
 
@@ -38,13 +38,13 @@ This section of the report will present the evaluation results obtained by the d
 
 \subsection{Runtime Efficiency} \label{effic}
 
-\Cref{fig:perf} shows the mean per-frame runtime of the developed tracking system across the selected test sequences for different camera count and model capacity configurations. It can be seen that across every single configuration, the detection step consumes the vast majority of the processing time. For the base setup with YOLO26n-pose and 4 camera vies, detection takes 0.0450 seconds out of a 0.0710-second total which equals approximately 63\% of the frame time. This discrepancy becomes wider when increasing the model capacity. For the larges model, YOLO26l-pose, still with only 4 cameras, the detection takes up to 0.2629 seconds out of a total of 0.2901 seconds, which represents approximately 91\% of the time.
+\Cref{fig:perf} shows the mean per-frame runtime of the developed tracking system across the selected test sequences for different camera count and model capacity configurations. It can be seen that across every single configuration, the detection step consumes the vast majority of the processing time. For the base setup with YOLO26n-pose and 4 camera vies, detection takes 0.0445 seconds out of a 0.0697-second total which equals approximately 64\% of the frame time. This discrepancy becomes wider when increasing the model capacity. For the larges model, YOLO26l-pose, still with only 4 cameras, the detection takes up to 0.2613 seconds out of a total of 0.2879 seconds, which represents approximately 91\% of the time.
 
-When adding more camera views to the system using the smallest model, the computational load predictably increases. Because the detection model has to run a forward pass on every single camera feed, detection time scales almost perfectly linearly with the number of cameras, from 0.045s for 4 cameras to 0.177s for 16. Steps like matching and EKF updates also scale up as camera counts increase because these need to handle more cross-camera data points to associate and filter. However, their growth is somewhat slower than the linear increase for detection. The EKF prediction step is largely a negligible part of the overall system runtime.
+When adding more camera views to the system using the smallest model, the computational load predictably increases. Because the detection model has to run a forward pass on every single camera feed, detection time scales almost perfectly linearly with the number of cameras, from 0.045s for 4 cameras to 0.181s for 16. Steps like matching and EKF updates also scale up as camera counts increase because these need to handle more cross-camera data points to associate and filter. However, their growth is somewhat slower than the linear increase for detection. The EKF prediction step is largely a negligible part of the overall system runtime.
 
-When keeping the camera count at 4 but upgrading the YOLO architecture to larger capacity version, it can be observed that the cost increases significantly. Upgrading from YOLO26n-pose to YOLO26s-pose doubles the detection time, going from 0.0450s to 0.0869s. However, jumping to Medium (m) or Large (l) causes a massive spike, tripling the time to over a quarter of a second. Predictably, only the runtime for the detection step is affected by increasing the model capacity and matching, EKF update, and Prediction remain almost entirely unchanged across all four model variants.
+When keeping the camera count at 4 but upgrading the YOLO architecture to larger capacity version, it can be observed that the cost increases significantly. Upgrading from YOLO26n-pose to YOLO26s-pose doubles the detection time, going from 0.0445s to 0.0876s. However, jumping to the medium or large version causes a massive spike, tripling the time to over a quarter of a second. Predictably, only the runtime for the detection step is affected by increasing the model capacity and matching, EKF update, and Prediction remain almost entirely unchanged across all four model variants.
 
-With the fastest configuration tested, the system achieves only around 14.1 fps. This is likely insufficient for real-time applications. However, it should be noted that not much effort has gone into optimization of the implementation, and that the test where performed on relatively weak integrated GPU hardware.
+With the fastest configuration tested, the system achieves only around 14.3 fps. This is likely insufficient for real-time applications. However, it should be noted that not much effort has gone into optimization of the implementation, and that the test where performed on relatively weak integrated GPU hardware.
 
 \begin{figure*}[ht!]
   \centering
@@ -83,11 +83,11 @@ With the fastest configuration tested, the system achieves only around 14.1 fps.
 
 \subsection{Quantitative Results} \label{quant}
 
-Quantitative results for the system on the chosen test sequences can be found in \cref{fig:eval-results}. When keeping the model fixed to YOLO26n-pose and increasing the number of cameras from 4 to 16, a significant reduction in pose and localization errors can be observed. The joint position error decreases drastically by about half, from 5.381 cm down to 2.659 cm. Similarly, tracking misalignment improves from 4.877 cm down to 2.583 cm. This indicates that incorporating more viewpoints substantially improves 3D localization and pose estimation accuracy. Also, the increase in camera views brings improvements in recall. Recall increases from 0.850 with 4 cameras and plateaus at 0.868 from 8 cameras onwards, indicating fewer missed detections likely because the cameras now cover more angles that would otherwise not be visible. There exists a slight trade-off in tracking accuracy and precision. Adding more cameras leads to a minor decrease in MOTA, from 0.825 down to 0.818, and Precision, from 0.970 down to 0.954. This can be explained by the fact that more camera views introduce a higher likelihood of false positives.
+Quantitative results for the system on the chosen test sequences can be found in \cref{fig:eval-results}. When keeping the model fixed to YOLO26n-pose and increasing the number of cameras from 4 to 16, a significant reduction in pose and localization errors can be observed. The joint position error decreases drastically by about half, from 5.439 cm down to 2.576 cm. This indicates that incorporating more viewpoints substantially improves 3D localization and pose estimation accuracy. Also, the increase in camera views brings improvements in recall. Recall increases from 0.975 with 4 cameras to 0.998 when using 16 cameras, indicating fewer missed detections likely because the cameras now cover more angles that would otherwise not be visible. There exists a slight trade-off in tracking accuracy and precision. Adding more cameras leads to a decrease in precision from 0.966 for 4 cameras to 0.955 with 16. This can be explained by the fact that more camera views introduce a higher likelihood of false positives and could also indicate limitations in the association algorithm. MOTA hits a sweet spot of 0.960 with 8 cameras. 
 
-In contrast, when keeping the camera count fixed at 4 and scaling up the model complexity from YOLO26n-pose to YOLO26l-pose, we see improvements in all metrics. The largest model achieves the best overall MOTA of 0.831 and Precision of 0.972 across the entire dataset. Upgrading the model capacity also reduces MOTP from 4.877 cm to 4.189 cm and MPJPE from 5.381 cm to 4.548 cm. However, the improvement in these metrics is not as significant as with the addition of more cameras.
+In contrast, when keeping the camera count fixed at 4 and scaling up the model complexity from YOLO26n-pose to YOLO26l-pose, we see improvements in all metrics. The largest model achieves the best overall MOTA of 0.960 and precision of 0.977. Upgrading the model capacity also reduces MPJPE from 5.439 cm to 4.554 cm. However, the improvement in this metric is not as significant as with the addition of more cameras.
 
-Finally, \cref{fig:eval-by-scene} shows the average performance for 4 camera views across all model capacities. It can be seen that the \inlinecode{161029_build1} scene is by far the one with the lowest performance metrics. In this scene, MOTP and Recall suffer from a large increase in false negatives. This is caused by heavy occlusions in this particular scene. The system performs particularly well on \inlinecode{161029_piano4} and \inlinecode{170915_office1}. This is largely because in these scenes the persons are in the room for the entire duration of the video sequence, avoiding a big source of errors for the system that is when persons leave or exit the room.
+Finally, \cref{fig:eval-by-scene} shows the average performance per scene across performed evaluations. It can be seen that the \inlinecode{160224_haggling1} scene is the one with the lowest performance metrics. In this scene, MOTA and Precision suffer from a large increase in false positives. This scene contains the most entries and exists from the room as well as more close contact, which the tracking algorithm can struggle with. The system performs particularly well on \inlinecode{161029_piano4} and \inlinecode{170915_office1}. This is largely because in these scenes the persons are in the room for the entire duration of the video sequence, avoiding a big source of errors for the system.
 
 
 \subsection{Qualitative Results} \label{qual}
