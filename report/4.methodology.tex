@@ -66,17 +66,27 @@ This formulation can handle asynchronous data naturally by simply omitting camer
 Because the projection mapping is non-linear, the extended Kalman filter requires the computation of the Jacobian $\mathbf{H}_i \in \mathbb{R}^{34M \times 102}$. Rather than deriving and hard-coding this computation analytically, the system leverages the automatic differentiation capabilities of PyTorch to compute the exact measurement Jacobian dynamically at runtime.
 
 
-\subsubsection{Association of Detections to Tracks} \label{arch-assoc1}
+\subsubsection{Data Association} \label{arch-assoc}
 
+Data association is performed in two separate steps. First, the detections for in view are matched against the existing 3D track predictions. This is performed independently for each view. Next, all detections that were not matched to any of the existing tracks must be matched between views in order to find opportunities for triangulation.
 
+The association between detections and existing tracks is performed independently for each view by first projecting the prediction to the 2D camera plane. Note that we also project the 3D covariances using the first-order approximation using the Jacobian. A cost matrix is populated between projected predictions and YOLO derived detections. The distance metric is a modified Mahalanobis distance that adds the log-determinant of the combined covariance to discourage highly uncertain matches with low statistical power:
+\begin{align*}
+    d_\Sigma(\mathbf{z}, \hat{\mathbf{z}}) &= (\mathbf{z} - \hat{\mathbf{z}})^T \Sigma^{-1} (\mathbf{z} - \hat{\mathbf{z}}) \\
+    C_{i,j} &= d_{\Sigma_{pred} + \Sigma_{obs}}(\mathbf{z}, \hat{\mathbf{z}}) + \log|\Sigma_{pred} + \Sigma_{obs}|  - N_{dim} \theta_{mo}
+\end{align*}
+where $N_{dim} = 34$, and $\theta_{mo}$ is a threshold parameter. Note that we fill the cost matrix with zero padding to allow for unmatched tracks or detections. The optimal association is found by solving this cost matrix using the Hungarian algorithm via the SciPy library implementation. This process can be seen as an implementation of maximum likelihood based model selection between all possible associations.
 
-\subsubsection{Association Between Views} \label{arch-assoc2}
-
+Detections that are not matched to existing tracks by the above method may belong to new people entering the scene. Since these detections lack 3D track priors, we must match them across different camera views. To achieve this goal, this project employees an iterative greedy-optimal matching approach to associate 2D detections across views. The algorithm works by first building associations between the first two views, then iteratively adding views. During the iterative addition step we compute a cost matrix and solve for the optimal association using the Hungarian algorithm in an effort to minimize the reprojection error:
+\begin{align*}
+    C_{cross} &= \frac{1}{K}\sum_{k=1}^K \left( d_{\Sigma_k}(\mathbf{z}_k, \pi_k(\mathbf{X}_{3D})) + \ln|\Sigma_k| \right) - N_{dim}\theta_{mn}
+\end{align*}
+where $\mathbf{X}_{3D}$ is the triangulated 3D point from the $K$ associated views, and $\theta_{mn}$ is the new-track association threshold. Detections matched in at least two views are grouped to initialize a new track via triangulation.
 
 
 \subsubsection{Track Creation and Deletion} \label{arch-tracks}
 
-To prevent spurious detections from creating false tracks, we manage the lifecycle of each track using a state machine. New tracks have just been added via triangulation of detections start out as tentative tracks.  If a tentative track is not matched to at least one detection in the next frame, it is deleted immediately. Once a tentative track have been observed for $\ge N_{age}$ consecutive frames, it is promoted to an active tracks. Active tracks are more robust to occasional missing detections. If an active track is not observed, its state is updated only using the Kalman filter prediction step. However, if it remains unmatched for more than $N_{inv}$ consecutive frames, it is deleted.
+To prevent spurious detections from creating false tracks, we manage the lifecycle of each track using a state machine. New tracks that have just been added via triangulation of detections start out as tentative tracks.  If a tentative track is not matched to at least one detection in the next frame, it is deleted immediately. Once a tentative track have been observed for $\ge N_{age}$ consecutive frames, it is promoted to an active tracks. Active tracks are more robust to occasional missing detections. If an active track is not observed, its state is updated only using the Kalman filter prediction step. However, if it remains unmatched for more than $N_{inv}$ consecutive frames, it is deleted.
 
 
 \subsection{Evaluation Procedure} \label{eval-proc}
