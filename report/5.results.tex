@@ -61,4 +61,38 @@ This section of the report will present the evaluation results obtained by the d
 
 \subsection{Qualitative Results} \label{qual}
 
+\begin{figure*}[ht!]
+  \centering
+  \hfill
+  \begin{subfigure}[t]{0.19\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/qualitative1.png}
+    \caption{Partially occluded person.}
+    \label{fig:qual-occlusion}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.19\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/qualitative2.png}
+    \caption{Inactive track seen by only one camera.}
+    \label{fig:qual-single}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.19\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/qualitative3.png}
+    \caption{Active track seen by only one camera.}
+    \label{fig:qual-single2}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.19\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/qualitative4.png}
+    \caption{Detection of person while exiting.}
+    \label{fig:qual-leave}
+  \end{subfigure}
+  \hfill
+  \caption{Some qualitative samples extracted from the evacuation results on the test set that exhibit commonly seen issues with the tracking system. Ground truth skeletons are drawn using thing red lines, while predicted skeletons are drawn thicker and with different colors per track.}
+  \label{fig:qual}
+\end{figure*}
 

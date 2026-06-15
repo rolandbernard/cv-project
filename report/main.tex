@@ -97,6 +97,26 @@
 \maketitle
 
 \begin{abstract}
+For this project the system has been evaluated by com-
+paring its 3D tracking predictions frame-by-frame against
+the ground truth annotations in the CMU Panoptic dataset.
+The experiments were run across all five selected sequences
+mentioned in Section 2, evaluating various combinations
+of YOLO pose estimation models, testing YOLO26n-pose
+, YOLO26s-pose, YOLO26m-pose, and YOLO26l-pose, and
+spacial view densities of 4, 8, 12, and 16. Note that due to
+computation demands, only the YOLO26n-pose model has
+been tested with more than 4 cameras. All evaluations were
+performed on AMD Ryzen AI 9 HX 370 CPU with most
+PyTorch operation running on the integrated AMD Radeon
+890M GPU.
+
+Due to the scope of the project, system parameter of
+the system were initialized heuristically rather than via
+exhaustive grid-search or end-to-end learning. While these
+rigid parameter values are functional, an identified area
+for improvement is optimizing them directly from tracking
+data either using grid search or end-to-end learning.
 \end{abstract}
 
 \input{1.introduction.tex}
