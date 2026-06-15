@@ -5,15 +5,18 @@
 
 This section of the report will detail the architectures of the tracking system developed in the project. Further it covers the selected evaluation metrics and how evaluation was performed.
 
+
 \subsection{System Architecture} \label{arch}
 
 This subsection will go into detail about the internal implementation of the tracking system. \Cref{fig:architecture} show the overall pipeline used in this projects tracking algorithm.
+
 
 \subsubsection{Overview} \label{arch-overview}
 
 The core of the tracking pipeline runs a recursive estimation loop on incoming multi-view video frames. The input to the system is a number of synchronized multi-view video feeds, and the final result is a 3D representation of the skeletal joint of each person in the scene.
 
 First, multi-view videos are passed through the YOLO detection network, yielding 2D bounding boxes and keypoints. Concurrently, the tracking module predicts the current 3D state of all previously known tracks based on continuous physics models. The keypoints of the predicted tracks are projected into the 2D camera planes and matched against the newly observed 2D detections. Detections matched to existing tracks trigger an extended Kalman filer update for the matched track to refine its 3D state. Unmatched, novel 2D detections matched between views, and if at least two views contain the new target, triangulated to instantiate new 3D tracks. Finally, updated tracks and newly created tracks are merged, and the loop repeats for the next timestamp.
+
 
 \subsubsection{2D Detections and Uncertainty Estimation} \label{arch-detect}
 
@@ -75,7 +78,7 @@ The association between detections and existing tracks is performed independentl
     d_\Sigma(\mathbf{z}, \hat{\mathbf{z}}) &= (\mathbf{z} - \hat{\mathbf{z}})^T \Sigma^{-1} (\mathbf{z} - \hat{\mathbf{z}}) \\
     C_{i,j} &= d_{\Sigma_{pred} + \Sigma_{obs}}(\mathbf{z}, \hat{\mathbf{z}}) + \log|\Sigma_{pred} + \Sigma_{obs}|  - N_{dim} \theta_{mo}
 \end{align*}
-where $N_{dim} = 34$, and $\theta_{mo}$ is a threshold parameter. Note that we fill the cost matrix with zero padding to allow for unmatched tracks or detections. The optimal association is found by solving this cost matrix using the Hungarian algorithm via the SciPy library implementation. This process can be seen as an implementation of maximum likelihood based model selection between all possible associations.
+where $N_{dim} = 34$, and $\theta_{mo}$ is a threshold parameter. Note that we fill the cost matrix with zero padding to allow for unmatched tracks or detections. The optimal association is found by solving this cost matrix using the Hungarian algorithm via the SciPy library implementation. This process can be interpreted as an implementation of maximum likelihood based model selection amongst all possible associations.
 
 Detections that are not matched to existing tracks by the above method may belong to new people entering the scene. Since these detections lack 3D track priors, we must match them across different camera views. To achieve this goal, this project employees an iterative greedy-optimal matching approach to associate 2D detections across views. The algorithm works by first building associations between the first two views, then iteratively adding views. During the iterative addition step we compute a cost matrix and solve for the optimal association using the Hungarian algorithm in an effort to minimize the reprojection error:
 \begin{align*}
@@ -91,13 +94,17 @@ To prevent spurious detections from creating false tracks, we manage the lifecyc
 
 \subsection{Evaluation Procedure} \label{eval-proc}
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
+For this project the system has been evaluated by comparing its 3D tracking predictions against the ground truth annotations in the CMU Panoptic dataset. The experiments were run across all five selected sequences, evaluating various combinations of YOLO pose estimation models, testing \inlinecode{YOLO26n-pose}, \inlinecode{YOLO26s-pose}, \inlinecode{YOLO26m-pose}, and \inlinecode{YOLO26l-pose}, and spacial view densities of 4, 8, 12, and 16. Note that due to computation demands, only the \inlinecode{YOLO26n-pose} model has been tested with more than 4 cameras.
 
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
+Due to the scope of the project, system parameter of the system were initialized heuristically rather than via exhaustive grid-search or end-to-end learning. While these rigid parameter values are functional, an identified area for improvement is optimizing them directly from tracking data either using grid search or end-to-end learning.
+
+Detection thresholds for the YOLO based detector we set to $\tau_{obj} = 0.5$ and $\tau_{kpt} = 0.25$, using also $N_{kpt} = 3$ as the minimum number of visible keypoints. The minimum pixel variance has been set to $\sigma_{min}^2 = 16.0$ pixels$^2$, with visibility and invisibility scale variances set to $\sigma_{vis}^2 = 0.005$ and $\sigma_{inv}^2 = 5$. The matching thresholds for both cross-view and prediction-view matching have both been set to $\theta_{mn} = \theta_{mo} = 0$. For the tracking lifecycle we configured the age for tentative track promotion to $N_{age} = 3$ and the maximum duration without detections for active tracks to $N_{inv} = 10$. Finally, the continuous physic matrices have been set as follows:
+\begin{align*}
+    \mathbf{F} = \begin{bmatrix} \mathbf{0}_{51 \times 51} & \mathbf{I}_{51 \times 51} \\ \mathbf{0}_{51 \times 51} & -0.5 \cdot \mathbf{I}_{51 \times 51} \end{bmatrix}, & \;
+    \mathbf{Q} = \begin{bmatrix} \sigma_{p}^2 \cdot \mathbf{I}_{51 \times 51} & \mathbf{0}_{51 \times 51} \\ \mathbf{0}_{51 \times 51} & \sigma_{v}^2 \cdot \mathbf{I}_{51 \times 51} \end{bmatrix}
+\end{align*}
+with $\sigma_{v}^2 = (2 \frac{m}{s})^2$ and $\sigma_{p}^2 = (5 cm)^2$. This matrix models constant velocity dynamics with a damping term of $-0.5$ on velocity to stabilize motion predictions.
 
 
 \subsection{Evaluation Metrics} \label{eval-metrics}
 
-Integer efficitur risus vitae felis auctor molestie. In tincidunt augue vitae libero tincidunt aliquam. Cras fermentum turpis eu velit blandit mollis. Ut vitae condimentum risus. Fusce sit amet enim ac turpis consectetur maximus. Maecenas vulputate pharetra vehicula. Duis lobortis, purus ac sagittis aliquam, nisi tellus pulvinar leo, nec eleifend nibh magna ut sapien. Aliquam erat volutpat. Morbi ultricies auctor feugiat. Donec maximus tellus ac aliquam mollis. Pellentesque laoreet, metus at blandit molestie, purus leo tristique turpis, imperdiet tincidunt justo neque nec risus. Nullam nibh augue, fermentum nec metus non, aliquam vehicula ligula. Mauris odio elit, eleifend ut erat id, facilisis tristique elit. Nulla nec posuere tellus.
-
-Donec finibus ullamcorper augue, vitae dictum felis interdum mattis. Cras elit diam, ultricies eu felis non, commodo maximus nunc. Curabitur pellentesque id dolor at facilisis. Suspendisse potenti. Fusce et blandit nulla, vel fermentum ipsum. Donec eget metus eget magna gravida porttitor non finibus sem. Etiam vestibulum tellus rhoncus, sagittis ligula at, aliquet ligula. Integer semper erat vel diam porta bibendum. Sed nec egestas ipsum. Aliquam accumsan nisi non interdum imperdiet. Nullam lobortis luctus odio, id tincidunt nisl tristique et. 
