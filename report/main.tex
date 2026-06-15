@@ -97,6 +97,9 @@
 \maketitle
 
 \begin{abstract}
+The tracking of 3D human poses represents a crucial area in computer vision, with widespread applications across robotics, automated surveillance, healthcare, and entertainment. This project explores a tracking-by-detection framework designed to fuse multi-view 2D pose estimations from synchronized camera feeds into coherent, temporally consistent 3D skeletal trajectories. A system utilizes the YOLO26-pose model family for 2D keypoint extraction and extended Kalman filtering for 3D state estimation is developer, implemented, and evaluated.
+
+The resulting system was evaluated on five video sequences from the CMU Panoptic dataset, benchmarking the performance impact of different 2D pose estimation model capacities and varying camera viewpoint counts. Computational runtime analysis shows that the 2D detection phase dominates the processing, consuming between 63\% and 91\% of per-frame execution time and scaling linearly with the number of camera feeds. Furthermore, while overall Multi-Object Tracking Accuracy (MOTA) remains relatively stable at around 0.82 across configurations, increasing the viewpoint density improves 3D reconstruction precision. For the smallest model configuration, scaling from 4 to 16 cameras reduces the Mean Per-Joint Position Error (MPJPE) from 5.381 cm down to 2.659 cm. Similarly, increasing the backbone model capacity under a fixed camera count yields tracking error reductions.
 \end{abstract}
 
 \input{1.introduction.tex}
