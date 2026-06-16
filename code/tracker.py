@@ -261,10 +261,8 @@ class Tracker:
         full_mean = self.physics.init_mean.clone()
         full_mean[:self.num_keypoint*3] = mean
         if isinstance(self.physics, ConstrainedPhysics):
-            p = mean[:self.num_keypoint*3].view(-1, 3)
-            constr_idx = self.physics.constraints
-            full_mean[constr_idx[:, 2]] = torch.linalg.vector_norm(
-                p[constr_idx[:, 0]] - p[constr_idx[:, 1]])
+            full_mean[self.physics.constraints[:, 2]] \
+                = self.physics.compute_distances(mean)
         full_cov = self.physics.init_cov.clone()
         return Track(self.last_id, full_mean, full_cov, self.num_keypoint)
 
@@ -421,7 +419,8 @@ class CrossViewFirstTracker(Tracker):
                         kpts, covs = det[0][m], det[1][m]
                         dist = (kpts - a_pred_kpts[i]).unsqueeze(-1)
                         total_cov = covs + a_pred_covar[i]
-                        dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
+                        dist = (
+                            dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
                         _, logdet = torch.linalg.slogdet(total_cov)
                         cost_matrix[:num_track, j] += dist + logdet \
                             - num_dim*self.mo_threshold
@@ -470,34 +469,37 @@ class CrossViewFirstTracker(Tracker):
         self.tracks = new_tracks
 
 
-def build_constrained_physics(scale=100.0) -> kalman.ConstrainedPhysics:
+def build_constrained_physics(scale=100.0, sym=True) -> kalman.ConstrainedPhysics:
     """ Build physics that includes limb length estimation and rigid body constraints. """
     links = util.RIGID_SKELETON
     nk, num_links = 17*3, len(links)
+    num_len = max(util.RIGID_SKELETON_SYM) + 1 if sym else num_links
     dyn_mat = torch.concat([
         torch.concat([
-            torch.zeros(nk, nk), torch.eye(nk), torch.zeros(nk, num_links)], dim=1),
+            torch.zeros(nk, nk), torch.eye(nk), torch.zeros(nk, num_len)], dim=1),
         torch.concat([
-            torch.zeros(nk, nk), torch.eye(nk)*-0.2, torch.zeros(nk, num_links)], dim=1),
-        torch.zeros(num_links, 2*nk + num_links)
+            torch.zeros(nk, nk), torch.eye(nk)*-0.2, torch.zeros(nk, num_len)], dim=1),
+        torch.zeros(num_len, 2*nk + num_len)
     ], dim=0)
     dyn_cov = torch.diag(torch.tensor(
         [(0.05 * scale)**2]*nk
         + [(3.0 * scale)**2]*nk
-        + [(0.001 * scale)**2]*num_links
+        + [(0.001 * scale)**2]*num_len
     ))
-    init_mean = torch.zeros(nk + nk + num_links)
+    init_mean = torch.zeros(nk + nk + num_len)
     init_cov = torch.diag(torch.concat([
         torch.full((nk,), (1.0 * scale)**2),
         torch.full((nk,), (5.0 * scale)**2),
-        torch.full((num_links,), (1.0 * scale)**2),
+        torch.full((num_len,), (1.0 * scale)**2),
     ]))
     constraints = torch.tensor([
-        [i, j, 2*nk + k] for k, (i, j) in enumerate(links)
+        [i, j, 2*nk + (util.RIGID_SKELETON_SYM[k] if sym else k)]
+        for k, (i, j) in enumerate(links)
     ], dtype=torch.long)
+    point_mix = torch.tensor([[5, 6]], dtype=torch.long)
     constr_cov = torch.eye(num_links) * (0.001 * scale)**2
     return kalman.ConstrainedPhysics(
-        dyn_mat, dyn_cov, init_mean, init_cov, constraints, constr_cov)
+        dyn_mat, dyn_cov, init_mean, init_cov, constraints, point_mix, constr_cov)
 
 
 def build_physics(scale=100.0) -> LinearPhysics:

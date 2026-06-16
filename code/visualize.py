@@ -35,7 +35,7 @@ class SkeletonPlayer:
         self.pl.set_background("white")
         # Precompute skeleton topology.
         lines = []
-        for p1, p2 in util.SKELETON:
+        for p1, p2 in util.RIGID_SKELETON:
             lines.extend([2, p1, p2])
         self.skeleton = np.array(lines)
         # Setup the scene and draw the first frame.
@@ -51,7 +51,7 @@ class SkeletonPlayer:
             center, up
         ]
 
-    def approx_scale(self, cameras):
+    def approx_scale(self, cameras: list):
         max_dist = 1e-5
         for cam0 in cameras:
             for cam1 in cameras:
@@ -71,7 +71,7 @@ class SkeletonPlayer:
         )
         self.pl.add_mesh(ground, style="wireframe", color="lightgray")
 
-    def setup_cameras(self, cameras: list, scale=0.05):
+    def setup_cameras(self, cameras: list, scale: float = 0.05):
         for cam in cameras:
             rotation = np.array(cam["R"])
             translate = np.array(cam["t"]).flatten()
@@ -100,7 +100,7 @@ class SkeletonPlayer:
             self.pl.add_mesh(
                 pv.Sphere(radius=z_cam * 0.1, center=camera_center), color="red")
 
-    def get_or_create_track(self, track_id, gt=False):
+    def get_or_create_track(self, track_id, gt: bool = False):
         track_key = (gt, track_id)
         if track_key not in self.track_meshes:
             mesh = pv.PolyData()
@@ -123,6 +123,12 @@ class SkeletonPlayer:
             self.track_actors[track_key] = actor
         return self.track_meshes[track_key], self.track_actors[track_key]
 
+    def augmented_kpts(self, track):
+        kpts = np.array(track["kpts"])
+        return np.concatenate([
+            kpts, kpts[5:7].mean(axis=0, keepdims=True)
+        ])
+
     def update_scene(self, value):
         frame_idx = int(np.round(value))
         if frame_idx >= len(self.frames):
@@ -133,7 +139,7 @@ class SkeletonPlayer:
             actor.SetVisibility(False)
         # Update and show all tracks visible at this time step.
         for track in self.frames[self.current_frame]:
-            new_mesh = pv.PolyData(np.array(track["kpts"]))
+            new_mesh = pv.PolyData(self.augmented_kpts(track))
             new_mesh.lines = self.skeleton
             mesh, actor = self.get_or_create_track(track["id"])
             mesh.copy_from(new_mesh)
@@ -141,7 +147,7 @@ class SkeletonPlayer:
         # Create also ground truth tracks if available.
         if self.gt_frames and self.current_frame < len(self.gt_frames):
             for track in self.gt_frames[self.current_frame]:
-                new_mesh = pv.PolyData(np.array(track["kpts"]))
+                new_mesh = pv.PolyData(self.augmented_kpts(track))
                 new_mesh.lines = self.skeleton
                 mesh, actor = self.get_or_create_track(track["id"], True)
                 mesh.copy_from(new_mesh)

@@ -52,26 +52,36 @@ class ConstrainedPhysics(LinearPhysics):
 
     def __init__(
         self, dyn_mat: torch.Tensor, dyn_cov: torch.Tensor, init_mean: torch.Tensor,
-        init_cov: torch.Tensor, constraints: torch.Tensor, constr_cov: torch.Tensor,
-        num_keypoint: int = 17
+        init_cov: torch.Tensor, constraints: torch.Tensor, point_mix: torch.Tensor,
+        constr_cov: torch.Tensor, num_keypoint: int = 17
     ):
         super().__init__(dyn_mat, dyn_cov, init_mean, init_cov)
         self.constraints = constraints
+        self.point_mix = point_mix
         self.num_keypoint = num_keypoint
         self.constr_cov = constr_cov
 
-    def pseudo_obs(self, x: torch.Tensor) -> torch.Tensor:
-        """ Compute the constraint violation. """
+    def compute_distances(self, x: torch.Tensor) -> torch.Tensor:
+        """ Compute the constrained distances. """
         *Bs, _ = x.shape
         points = x[:self.num_keypoint*3].view(*Bs, -1, 3)
+        points = torch.concat([
+            points,
+            (points[..., self.point_mix[:, 0], :]
+             + points[..., self.point_mix[:, 1], :]) * 0.5
+        ], dim=-2)
         pi = points[..., self.constraints[:, 0], :]
         pj = points[..., self.constraints[:, 1], :]
-        dist = torch.linalg.vector_norm(pi - pj, dim=-1)
-        return dist - x[..., self.constraints[:, 2]]
+        return torch.linalg.vector_norm(pi - pj, dim=-1)
+
+    def pseudo_obs(self, x: torch.Tensor) -> torch.Tensor:
+        """ Compute the constraint violation. """
+        return self.compute_distances(x) - x[..., self.constraints[:, 2]]
 
     def to(self, *args, **kargs):
         super().to(*args, **kargs)
         self.constraints = self.constraints.to(*args, **kargs)
+        self.point_mix = self.point_mix.to(*args, **kargs)
         self.constr_cov = self.constr_cov.to(*args, **kargs)
         return self
 
