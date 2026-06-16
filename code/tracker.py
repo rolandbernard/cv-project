@@ -11,7 +11,7 @@ import kalman
 import source
 from camera import Camera
 from detect import PoseDetector
-from kalman import LinearPhysics
+from kalman import LinearPhysics, ConstrainedPhysics
 
 
 class Track:
@@ -79,6 +79,7 @@ class Track:
 
 
 def per_point_cov(covar: torch.Tensor, num_dim: int = 3) -> torch.Tensor:
+    """ Extract the block diagonal part of the given covariance matrix. """
     *Bs, N, N = covar.shape
     by_point = covar.view(-1, N // num_dim, num_dim, N // num_dim, num_dim)
     blocks = torch.diagonal(by_point, dim1=1, dim2=3)
@@ -87,15 +88,16 @@ def per_point_cov(covar: torch.Tensor, num_dim: int = 3) -> torch.Tensor:
 
 class Tracker:
     """
-    A tracker that only tracks objects in individual 2d images. Detections are
-    matched to tracks using the hungarian algorithm. Tracks become active if they
-    are observed a sufficient number of times, and removed once they are not
-    observed for some time.
+    This is the main class that performs multi-camera pose tracking. It uses
+    a PoseDetector to get 2d detections from each camera view and then associates
+    and tracks them in 3d using a Kalman filter. Tracks become active if they are
+    observed a sufficient number of times, and removed once they are not observed
+    for some time.
     """
 
     def __init__(
         self, detector: PoseDetector, physics: LinearPhysics, min_age: int = 3, max_inv: int = 10,
-        mo_threshold: float = 0.0, mn_threshold: float = 0.0, min_var=1e-5, num_keypoint: int = 17
+        mo_threshold: float = 0.0, mn_threshold: float = 0.0, num_keypoint: int = 17
     ):
         self.tracks: list[Track] = []
         self.last_id = 0
@@ -105,20 +107,14 @@ class Tracker:
         self.max_inv = max_inv
         self.mo_threshold = mo_threshold
         self.mn_threshold = mn_threshold
-        self.min_var = min_var
         self.num_keypoint = num_keypoint
-        self.timing_stats = {
-            "detection": [0.0, 0],
-            "matching_old": [0.0, 0],
-            "matching_new": [0.0, 0],
-            "update": [0.0, 0],
-            "create_new": [0.0, 0],
-            "prediction": [0.0, 0]
-        }
+        self.timing_stats = {}
 
     def add_time_stat(self, stage: str, start: float):
         """ Add a call to the timing stats that ended now and started at the given time. """
-        self.timing_stats[stage][0] += (time.perf_counter() - start)
+        if stage not in self.timing_stats:
+            self.timing_stats[stage] = [0.0, 0]
+        self.timing_stats[stage][0] += time.perf_counter() - start
         self.timing_stats[stage][1] += 1
 
     def get_prediction(self) -> list[Track]:
@@ -263,23 +259,29 @@ class Tracker:
         self.last_id += 1
         full_mean = self.physics.init_mean.clone()
         full_mean[:self.num_keypoint*3] = mean
+        if isinstance(self.physics, ConstrainedPhysics):
+            p = mean[:self.num_keypoint*3].view(-1, 3)
+            constr_idx = self.physics.constraints
+            full_mean[constr_idx[:, 2]] = torch.linalg.vector_norm(
+                p[constr_idx[:, 0]] - p[constr_idx[:, 1]])
         full_cov = self.physics.init_cov.clone()
         return Track(self.last_id, full_mean, full_cov, self.num_keypoint)
 
-    def constrain_covars(self):
-        """ Constrain the covariances to avoid them becoming too small. """
-        for track in self.tracks:
-            track.cov.diagonal().clamp(min=self.min_var)
-
     def update_track(self, track: Track, cams: list[Camera], kpts: list[torch.Tensor], covs: list[torch.Tensor]):
-        obf, ob_m, ob_v = kalman.emerge_obs(
-            [lambda x, c=cam: c.project_pinhole(x[:self.num_keypoint*3].view(-1, 3)).flatten()
-             for cam in cams],
-            [mean for mean in kpts],
-            [cov for cov in covs]
-        )
-        mean, cov = kalman.eupdate(
-            track.mean, track.cov, ob_m, ob_v, obf)
+        """ Update the given track with detections in multiple camera views. """
+        ob_fs = [lambda x, cam=cam: cam.project_pinhole(x[:self.num_keypoint*3].view(-1, 3)).flatten()
+                 for cam in cams]
+        ob_ms = [mean for mean in kpts]
+        ob_vs = [cov for cov in covs]
+        # Add pseudo-observation for limb length constraints.
+        if isinstance(self.physics, ConstrainedPhysics):
+            ob_fs.append(lambda x: self.physics.pseudo_obs(x))  # type: ignore
+            num_const = self.physics.constraints.shape[0]
+            # Constraints are supposed to have zero difference.
+            ob_ms.append(torch.zeros(num_const, device=track.mean.device))
+            ob_vs.append(self.physics.constr_cov)
+        ob_f, ob_m, ob_v = kalman.emerge_obs(ob_fs, ob_ms, ob_vs)
+        mean, cov = kalman.eupdate(track.mean, track.cov, ob_m, ob_v, ob_f)
         track.update(mean, cov)
 
     def update(self, cams: list[Camera], imgs: list[torch.Tensor]):
@@ -377,21 +379,52 @@ class Tracker:
         return last_cams, frames, 1/dt
 
 
+def build_constrained_physics(scale=100.0) -> kalman.ConstrainedPhysics:
+    """ Build physics that includes limb length estimation and rigid body constraints. """
+    links = util.RIGID_SKELETON
+    nk, num_links = 17*3, len(links)
+    dyn_mat = torch.concat([
+        torch.concat([
+            torch.zeros(nk, nk), torch.eye(nk), torch.zeros(nk, num_links)], dim=1),
+        torch.concat([
+            torch.zeros(nk, nk), torch.eye(nk)*-0.5, torch.zeros(nk, num_links)], dim=1),
+        torch.zeros(nk, num_links)
+    ], dim=0)
+    dyn_cov = torch.diag(torch.tensor(
+        [(0.05 * scale)**2]*nk
+        + [(2.0 * scale)**2]*nk
+        + [(0.001 * scale)**2]*num_links
+    ))
+    init_mean = torch.zeros(nk + nk + num_links)
+    init_cov = torch.diag(torch.concat([
+        torch.full((nk,), (1.0 * scale)**2),
+        torch.full((nk,), (5.0 * scale)**2),
+        torch.full((nk,), (1.0 * scale)**2),
+    ]))
+    constraints = torch.tensor([
+        [i, j, 2*nk + k] for k, (i, j) in enumerate(links)
+    ], dtype=torch.long)
+    constr_cov = torch.eye(num_links) * (0.001 * scale)**2
+    return kalman.ConstrainedPhysics(
+        dyn_mat, dyn_cov, init_mean, init_cov, constraints, constr_cov)
+
+
 def build_physics(scale=100.0) -> LinearPhysics:
     """
     Build some standard physics based on the given scale. The scale must be
     relative to meters, i.e., `scale=100` means centimeter units.
     """
+    nk = 17*3
     dyn_mat = torch.concat([
-        torch.concat([torch.zeros(17*3, 17*3), torch.eye(3*17)], dim=1),
-        torch.concat([torch.zeros(17*3, 17*3), torch.eye(3*17)*-0.5], dim=1)
+        torch.concat([torch.zeros(nk, nk), torch.eye(nk)], dim=1),
+        torch.concat([torch.zeros(nk, nk), torch.eye(nk)*-0.5], dim=1)
     ], dim=0)
     dyn_cov = torch.diag(torch.tensor(
-        [(0.05 * scale)**2]*3*17 + [(2.0 * scale)**2]*3*17
+        [(0.05 * scale)**2]*nk + [(2.0 * scale)**2]*nk
     ))
-    init_mean = torch.zeros(17*3 + 17*3)
+    init_mean = torch.zeros(nk + nk)
     init_cov = torch.diag(torch.concat([
-        torch.full((17*3,), (1.0 * scale)**2),
-        torch.full((17*3,), (5.0 * scale)**2),
+        torch.full((nk,), (1.0 * scale)**2),
+        torch.full((nk,), (5.0 * scale)**2),
     ]))
     return LinearPhysics(dyn_mat, dyn_cov, init_mean, init_cov)

@@ -44,6 +44,37 @@ class LinearPhysics:
         return self
 
 
+class ConstrainedPhysics(LinearPhysics):
+    """
+    A physics model that incorporates rigid body constraints between keypoints.
+    The state is assumed to contain positions, velocities, and limb lengths.
+    """
+
+    def __init__(
+        self, dyn_mat: torch.Tensor, dyn_cov: torch.Tensor, init_mean: torch.Tensor,
+        init_cov: torch.Tensor, constraints: torch.Tensor, constr_cov: torch.Tensor,
+        num_keypoint: int = 17
+    ):
+        super().__init__(dyn_mat, dyn_cov, init_mean, init_cov)
+        self.constraints = constraints
+        self.num_keypoint = num_keypoint
+        self.constr_cov = constr_cov
+
+    def pseudo_obs(self, x: torch.Tensor) -> torch.Tensor:
+        """ Compute the constraint violation. """
+        *Bs, _ = x.shape
+        points = x[:self.num_keypoint*3].view(*Bs, -1, 3)
+        pi = points[..., self.constraints[:, 0], :]
+        pj = points[..., self.constraints[:, 1], :]
+        dist = torch.linalg.vector_norm(pi - pj, dim=-1)
+        return dist - x[..., self.constraints[:, 2]]
+
+    def to(self, *args, **kargs):
+        super().to(*args, **kargs)
+        self.constraints = self.constraints.to(*args, **kargs)
+        return self
+
+
 def discretize(dt: float, dyn_mat: torch.Tensor, dyn_cov: torch.Tensor):
     """ Discretize the given continuous-time matrices using the given time. """
     # Use a second order approximation for now.

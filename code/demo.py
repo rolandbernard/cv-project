@@ -11,7 +11,7 @@ import scipy.optimize as opt
 
 from source import OnlineVideoSource, OfflineVideoSource
 from camera import Camera
-from tracker import Tracker, build_physics
+from tracker import Tracker, build_physics, build_constrained_physics
 from detect import PoseDetector
 import util
 
@@ -37,7 +37,6 @@ class LiveSkeletonPlayer:
         self.pl.show(interactive_update=True)
 
     def add_point_cloud(self, points, colors, point_size=2):
-        """ Add a static point cloud to the scene background. """
         poly = pv.PolyData(points)
         poly["colors"] = colors
         self.pl.add_mesh(poly, scalars="colors", rgb=True, point_size=point_size, render_points_as_spheres=True, opacity=0.6)
@@ -108,7 +107,6 @@ def estimate_camera_params(img1, img2, distance=None, fov1=None, fov2=None):
     _, mask = cv2.findFundamentalMat(pts1, pts2, fm_method, 1.0, 0.9999, 50000)
     if mask is None: raise RuntimeError("Fundamental matrix estimation failed.")
     inliers1, inliers2 = pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
-    print(f"Cleaned SFM inliers: {len(inliers1)}")
     def epipolar_loss(params):
         f1, cx1, cy1, f2, cx2, cy2 = params
         K1_c = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32)
@@ -128,15 +126,13 @@ def estimate_camera_params(img1, img2, distance=None, fov1=None, fov2=None):
     f2 = (np.sqrt(w2**2+h2**2)/(2*np.tan(np.radians(fov2)/2))) if fov2 else 1.17 * max(h2, w2)
     cx1, cy1 = w1 / 2.0, h1 / 2.0; cx2, cy2 = w2 / 2.0, h2 / 2.0
     if fov1 is None or fov2 is None:
-        print("Optimizing independent intrinsics via Symmetric Epipolar Distance...")
-        x0 = [f1, cx1, cy1, f2, cx2, cy2]
-        bounds = [(0.5*w1, 3*w1), (w1*0.4, w1*0.6), (h1*0.4, h1*0.6), (0.5*w2, 3*w2), (w2*0.4, w2*0.6), (h2*0.4, h2*0.6)]
-        res = opt.minimize(epipolar_loss, x0=x0, bounds=bounds, method='Nelder-Mead'); f1, cx1, cy1, f2, cx2, cy2 = res.x
+        print("Optimizing independent intrinsics...")
+        res = opt.minimize(epipolar_loss, x0=[f1, cx1, cy1, f2, cx2, cy2], bounds=[(0.5*w1, 3*w1), (w1*0.4, w1*0.6), (h1*0.4, h1*0.6), (0.5*w2, 3*w2), (w2*0.4, w2*0.6), (h2*0.4, h2*0.6)], method='Nelder-Mead')
+        f1, cx1, cy1, f2, cx2, cy2 = res.x
     K1, K2 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32), np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]], dtype=np.float32)
     p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1, None); p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2, None)
     E, final_mask = cv2.findEssentialMat(p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
     _, R, t, _ = cv2.recoverPose(E, p1_n, p2_n, np.eye(3), mask=final_mask)
-    print("Final Bundle Adjustment refinement (all parameters)...")
     def get_ba_errors(params, pts1, pts2):
         f1, cx1, cy1, f2, cx2, cy2, rvec, curr_t = params[0], params[1], params[2], params[3], params[4], params[5], params[6:9], params[9:12]
         K1 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32); K2 = np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]], dtype=np.float32)
@@ -182,8 +178,9 @@ def estimate_camera_params_moge(img1, img2, distance=None):
     cb = np.linalg.norm(best_t)
     if distance is not None and cb > 1e-6: scl = distance / cb; best_t *= scl; pm1 *= scl; pm2 *= scl; print(f"MoGe Baseline: {cb:.2f}m. Scaled to user distance: {distance:.2f}m.")
     else: print(f"Using MoGe metric baseline: {cb:.2f}m.")
-    step = 4; pts1_vis = pm1[::step, ::step].reshape(-1, 3); colors1_vis = img1[::step, ::step].reshape(-1, 3); pts2_vis = pm2[::step, ::step].reshape(-1, 3); colors2_vis = img2[::step, ::step].reshape(-1, 3)
-    return K1, K2, best_R, best_t, (pts1_vis, colors1_vis), (pts2_vis, colors2_vis)
+    step = 4; pts1_v, clrs1_v = pm1[::step, ::step].reshape(-1, 3), img1[::step, ::step].reshape(-1, 3)
+    pts2_v, clrs2_v = pm2[::step, ::step].reshape(-1, 3), img2[::step, ::step].reshape(-1, 3)
+    return K1, K2, best_R, best_t, (pts1_v, clrs1_v), (pts2_v, clrs2_v)
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("url1"); parser.add_argument("url2"); parser.add_argument("--distance", type=float); parser.add_argument("--fov1", type=float); parser.add_argument("--fov2", type=float); parser.add_argument("--resize", type=int, nargs=2); parser.add_argument("--moge", action="store_true"); args = parser.parse_args()
@@ -198,15 +195,14 @@ def main():
     try:
         if args.moge: 
             K1, K2, R, t, cloud1, cloud2 = estimate_camera_params_moge(img1, img2, args.distance)
-            # Transform cloud2 (Camera 2 frame) to world (Camera 1 frame): Pw = R * P2 + t
             pts2_world = (R @ cloud2[0].T + t.reshape(3, 1)).T
             clouds = [(cloud1[0], cloud1[1]), (pts2_world, cloud2[1])]
         else: K1, K2, R, t = estimate_camera_params(img1, img2, args.distance, args.fov1, args.fov2)
     except Exception as e: print(f"Error: {e}"); source.release(); return
     print(f"K1:\n{K1}\nK2:\n{K2}\nR:\n{R}\nt:\n{t}"); cam1 = Camera(rotation=torch.eye(3), translation=torch.zeros(3), intrinsic=torch.from_numpy(K1).float()); cam2 = Camera(rotation=torch.from_numpy(R.T).float(), translation=torch.from_numpy(-R.T @ t.flatten()).float(), intrinsic=torch.from_numpy(K2).float())
-    cameras = [cam1, cam2]; source.cameras = cameras; detector = PoseDetector(path="./nets"); physics = build_physics(scale=1.0)
+    cameras = [cam1, cam2]; source.cameras = cameras; detector = PoseDetector(path="./nets"); physics = build_constrained_physics(scale=1.0)
     if torch.cuda.is_available(): detector.to("cuda"); cam1.to("cuda"); cam2.to("cuda"); physics.to("cuda")
-    tracker = Tracker(detector, physics, mo_threshold=1); player = LiveSkeletonPlayer(cameras)
+    tracker = Tracker(detector, physics); player = LiveSkeletonPlayer(cameras)
     if clouds:
         for pts, clrs in clouds: player.add_point_cloud(pts, clrs)
     last_ts = ts
