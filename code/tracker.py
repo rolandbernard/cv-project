@@ -387,19 +387,19 @@ def build_constrained_physics(scale=100.0) -> kalman.ConstrainedPhysics:
         torch.concat([
             torch.zeros(nk, nk), torch.eye(nk), torch.zeros(nk, num_links)], dim=1),
         torch.concat([
-            torch.zeros(nk, nk), torch.eye(nk)*-0.5, torch.zeros(nk, num_links)], dim=1),
-        torch.zeros(nk, num_links)
+            torch.zeros(nk, nk), torch.eye(nk)*-0.2, torch.zeros(nk, num_links)], dim=1),
+        torch.zeros(num_links, 2*nk + num_links)
     ], dim=0)
     dyn_cov = torch.diag(torch.tensor(
         [(0.05 * scale)**2]*nk
-        + [(2.0 * scale)**2]*nk
+        + [(3.0 * scale)**2]*nk
         + [(0.001 * scale)**2]*num_links
     ))
     init_mean = torch.zeros(nk + nk + num_links)
     init_cov = torch.diag(torch.concat([
         torch.full((nk,), (1.0 * scale)**2),
         torch.full((nk,), (5.0 * scale)**2),
-        torch.full((nk,), (1.0 * scale)**2),
+        torch.full((num_links,), (1.0 * scale)**2),
     ]))
     constraints = torch.tensor([
         [i, j, 2*nk + k] for k, (i, j) in enumerate(links)
@@ -417,10 +417,10 @@ def build_physics(scale=100.0) -> LinearPhysics:
     nk = 17*3
     dyn_mat = torch.concat([
         torch.concat([torch.zeros(nk, nk), torch.eye(nk)], dim=1),
-        torch.concat([torch.zeros(nk, nk), torch.eye(nk)*-0.5], dim=1)
+        torch.concat([torch.zeros(nk, nk), torch.eye(nk)*-0.2], dim=1)
     ], dim=0)
     dyn_cov = torch.diag(torch.tensor(
-        [(0.05 * scale)**2]*nk + [(2.0 * scale)**2]*nk
+        [(0.05 * scale)**2]*nk + [(3.0 * scale)**2]*nk
     ))
     init_mean = torch.zeros(nk + nk)
     init_cov = torch.diag(torch.concat([

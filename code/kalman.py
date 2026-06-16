@@ -72,6 +72,7 @@ class ConstrainedPhysics(LinearPhysics):
     def to(self, *args, **kargs):
         super().to(*args, **kargs)
         self.constraints = self.constraints.to(*args, **kargs)
+        self.constr_cov = self.constr_cov.to(*args, **kargs)
         return self
 
 
