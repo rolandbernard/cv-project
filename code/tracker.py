@@ -397,35 +397,36 @@ class CrossViewFirstTracker(Tracker):
         # Match matched detections against tracks.
         t_start = time.perf_counter()
         # Build cost matrix.
-        a_pred_kpts, a_pred_covar = [], []
-        for cam in cams:
-            # Project track to 2d camera plane. Also project covariances.
-            pred_means = torch.stack(
-                [track.mean[:self.num_keypoint*3] for track in self.tracks])
-            pred_jacs, pred_kpts = kalman.batched_jacobian(
-                lambda x: cam.project_pinhole(x.view(-1, 3)).view(-1, self.num_keypoint*2), pred_means)
-            pred_covar = torch.stack([track.cov[:self.num_keypoint*3, :self.num_keypoint*3]
-                                     for track in self.tracks])
-            pred_covar = pred_jacs @ pred_covar @ pred_jacs.mT
-            a_pred_kpts.append(pred_kpts)
-            a_pred_covar.append(pred_covar)
         num_detect, num_dim = matched[0].shape[0], detections[0][0].shape[1]
         num_track = len(self.tracks)
         cost_matrix = torch.zeros(
             (num_track + num_detect, num_detect), device=matched[0].device)
-        for j, match in enumerate(zip(*matched)):
-            count = 0
-            for cam, m, det in zip(cams, match, detections):
-                if m.item() != -1:
-                    kpts, covs = det[0][m], det[1][m]
-                    dist = (kpts - pred_kpts).unsqueeze(-1)
-                    total_cov = covs + pred_covar
-                    dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
-                    _, logdet = torch.linalg.slogdet(total_cov)
-                    cost_matrix[:num_track, j] += dist + logdet \
-                        - num_dim*self.mo_threshold
-                    count += 1
-            cost_matrix[:num_track, j] /= count
+        if num_detect > 0 and num_track > 0:
+            a_pred_kpts, a_pred_covar = [], []
+            for cam in cams:
+                # Project track to 2d camera plane. Also project covariances.
+                pred_means = torch.stack(
+                    [track.mean[:self.num_keypoint*3] for track in self.tracks])
+                pred_jacs, pred_kpts = kalman.batched_jacobian(
+                    lambda x: cam.project_pinhole(x.view(-1, 3)).view(-1, self.num_keypoint*2), pred_means)
+                pred_covar = torch.stack([track.cov[:self.num_keypoint*3, :self.num_keypoint*3]
+                                         for track in self.tracks])
+                pred_covar = pred_jacs @ pred_covar @ pred_jacs.mT
+                a_pred_kpts.append(pred_kpts)
+                a_pred_covar.append(pred_covar)
+            for j, match in enumerate(zip(*matched)):
+                count = 0
+                for i, (cam, m, det) in enumerate(zip(cams, match, detections)):
+                    if m.item() != -1:
+                        kpts, covs = det[0][m], det[1][m]
+                        dist = (kpts - a_pred_kpts[i]).unsqueeze(-1)
+                        total_cov = covs + a_pred_covar[i]
+                        dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
+                        _, logdet = torch.linalg.slogdet(total_cov)
+                        cost_matrix[:num_track, j] += dist + logdet \
+                            - num_dim*self.mo_threshold
+                        count += 1
+                cost_matrix[:num_track, j] /= count
         # Run Hungarian matching.
         cost_np = cost_matrix.cpu().numpy()
         row_idx, col_idx = scipy.optimize.linear_sum_assignment(cost_np)
@@ -434,7 +435,7 @@ class CrossViewFirstTracker(Tracker):
         t_start = time.perf_counter()
         new_tracks = []
         for i, j in zip(row_idx, col_idx):
-            match = matched[j]
+            match = [m[j] for m in matched]
             m_cams, m_kpts, m_covs = [], [], []
             for cam, m, det in zip(cams, match, detections):
                 if m.item() != -1:
@@ -442,7 +443,7 @@ class CrossViewFirstTracker(Tracker):
                     kpts, covs = det[0][m], det[1][m]
                     m_kpts.append(kpts)
                     m_covs.append(covs)
-            if row_idx >= num_track:
+            if i < num_track:
                 # Update the existing matched track.
                 track = self.tracks[i]
             else:
