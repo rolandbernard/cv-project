@@ -126,13 +126,13 @@ class BaseSkeletonPlayer:
             ])
         return kpts
 
-    def add_point_cloud(self, points, colors, point_size=0.001):
+    def add_point_cloud(self, points, colors, point_size=2):
         """ Add a point cloud to the 3D visualization. """
         poly = pv.PolyData(points)
         poly["colors"] = colors
         self.pl.add_mesh(
             poly, scalars="colors", rgb=True,
-            point_size=point_size * self.scale,
+            point_size=point_size,
             render_points_as_spheres=True,
             opacity=0.6
         )
