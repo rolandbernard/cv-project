@@ -243,7 +243,7 @@ class LiveSkeletonPlayer(BaseSkeletonPlayer):
     def update(self, tracks):
         """ Update the visualization with new tracks. """
         self.set_frame(tracks)
-        self.pl.render()
+        self.pl.update()
 
 
 def load_from_files(main_file: str, gt_file: None | str = None) -> SkeletonPlayer:
