@@ -11,7 +11,7 @@ import scipy.optimize as opt
 
 from source import OnlineVideoSource, OfflineVideoSource
 from camera import Camera
-from tracker import Tracker, build_physics, build_constrained_physics
+from tracker import Tracker, CrossViewFirstTracker, build_physics, build_constrained_physics
 from detect import PoseDetector
 import util
 
@@ -133,6 +133,7 @@ def estimate_camera_params(img1, img2, distance=None, fov1=None, fov2=None):
     p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1, None); p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2, None)
     E, final_mask = cv2.findEssentialMat(p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
     _, R, t, _ = cv2.recoverPose(E, p1_n, p2_n, np.eye(3), mask=final_mask)
+    print("Final Bundle Adjustment refinement (all parameters)...")
     def get_ba_errors(params, pts1, pts2):
         f1, cx1, cy1, f2, cx2, cy2, rvec, curr_t = params[0], params[1], params[2], params[3], params[4], params[5], params[6:9], params[9:12]
         K1 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32); K2 = np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]], dtype=np.float32)
@@ -183,7 +184,7 @@ def estimate_camera_params_moge(img1, img2, distance=None):
     return K1, K2, best_R, best_t, (pts1_v, clrs1_v), (pts2_v, clrs2_v)
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("url1"); parser.add_argument("url2"); parser.add_argument("--distance", type=float); parser.add_argument("--fov1", type=float); parser.add_argument("--fov2", type=float); parser.add_argument("--resize", type=int, nargs=2); parser.add_argument("--moge", action="store_true"); args = parser.parse_args()
+    parser = argparse.ArgumentParser(); parser.add_argument("url1"); parser.add_argument("url2"); parser.add_argument("--distance", type=float); parser.add_argument("--fov1", type=float); parser.add_argument("--fov2", type=float); parser.add_argument("--resize", type=int, nargs=2); parser.add_argument("--moge", action="store_true"); parser.add_argument("--cross_first", action="store_true", help="Use CrossViewFirstTracker"); args = parser.parse_args()
     urls = [args.url1, args.url2]; is_offline = all(os.path.isfile(u) for u in urls); resize = tuple(args.resize) if args.resize else None; source = OfflineVideoSource(urls, resize=resize) if is_offline else OnlineVideoSource(urls, resize=resize)
     source.start(); print("Waiting for frames..."); ts, frames, _ = None, None, None
     for _ in range(100):
@@ -202,7 +203,8 @@ def main():
     print(f"K1:\n{K1}\nK2:\n{K2}\nR:\n{R}\nt:\n{t}"); cam1 = Camera(rotation=torch.eye(3), translation=torch.zeros(3), intrinsic=torch.from_numpy(K1).float()); cam2 = Camera(rotation=torch.from_numpy(R.T).float(), translation=torch.from_numpy(-R.T @ t.flatten()).float(), intrinsic=torch.from_numpy(K2).float())
     cameras = [cam1, cam2]; source.cameras = cameras; detector = PoseDetector(path="./nets"); physics = build_constrained_physics(scale=1.0)
     if torch.cuda.is_available(): detector.to("cuda"); cam1.to("cuda"); cam2.to("cuda"); physics.to("cuda")
-    tracker = Tracker(detector, physics); player = LiveSkeletonPlayer(cameras)
+    tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
+    tracker = tracker_cls(detector, physics); player = LiveSkeletonPlayer(cameras)
     if clouds:
         for pts, clrs in clouds: player.add_point_cloud(pts, clrs)
     last_ts = ts

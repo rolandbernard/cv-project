@@ -4,6 +4,7 @@ import copy
 
 import torch
 import scipy.optimize
+from torch import Tensor
 
 import util
 import camera
@@ -321,7 +322,7 @@ class Tracker:
                 if track.num_detection >= self.min_age and track.last_detection <= self.max_inv:
                     new_tracks.append(track)
         self.add_time_stat("update", t_start)
-        # Match unassigned detections among between camera views.
+        # Match unassigned detections between camera views.
         t_start = time.perf_counter()
         matched = self.associate_detections(cams, nomatch)
         self.add_time_stat("matching_new", t_start)
@@ -377,6 +378,95 @@ class Tracker:
         finally:
             source.release()
         return last_cams, frames, 1/dt
+
+
+class CrossViewFirstTracker(Tracker):
+    """
+    Tracker that performs cross-view association first.
+    """
+
+    def update(self, cams: list[Camera], imgs: list[torch.Tensor]):
+        # Perform 2d detection on each image.
+        t_start = time.perf_counter()
+        detections = self.detector.detect(cams, imgs)
+        self.add_time_stat("detection", t_start)
+        # Match detections between camera views.
+        t_start = time.perf_counter()
+        matched = self.associate_detections(cams, detections)
+        self.add_time_stat("matching_new", t_start)
+        # Match matched detections against tracks.
+        t_start = time.perf_counter()
+        # Build cost matrix.
+        a_pred_kpts, a_pred_covar = [], []
+        for cam in cams:
+            # Project track to 2d camera plane. Also project covariances.
+            pred_means = torch.stack(
+                [track.mean[:self.num_keypoint*3] for track in self.tracks])
+            pred_jacs, pred_kpts = kalman.batched_jacobian(
+                lambda x: cam.project_pinhole(x.view(-1, 3)).view(-1, self.num_keypoint*2), pred_means)
+            pred_covar = torch.stack([track.cov[:self.num_keypoint*3, :self.num_keypoint*3]
+                                     for track in self.tracks])
+            pred_covar = pred_jacs @ pred_covar @ pred_jacs.mT
+            a_pred_kpts.append(pred_kpts)
+            a_pred_covar.append(pred_covar)
+        num_detect, num_dim = matched[0].shape[0], detections[0][0].shape[1]
+        num_track = len(self.tracks)
+        cost_matrix = torch.zeros(
+            (num_track + num_detect, num_detect), device=matched[0].device)
+        for j, match in enumerate(zip(*matched)):
+            count = 0
+            for cam, m, det in zip(cams, match, detections):
+                if m.item() != -1:
+                    kpts, covs = det[0][m], det[1][m]
+                    dist = (kpts - pred_kpts).unsqueeze(-1)
+                    total_cov = covs + pred_covar
+                    dist = (dist.mT @ torch.linalg.solve(total_cov, dist)).flatten()
+                    _, logdet = torch.linalg.slogdet(total_cov)
+                    cost_matrix[:num_track, j] += dist + logdet \
+                        - num_dim*self.mo_threshold
+                    count += 1
+            cost_matrix[:num_track, j] /= count
+        # Run Hungarian matching.
+        cost_np = cost_matrix.cpu().numpy()
+        row_idx, col_idx = scipy.optimize.linear_sum_assignment(cost_np)
+        self.add_time_stat("matching_old", t_start)
+        # Update matched tracks or create a new one.
+        t_start = time.perf_counter()
+        new_tracks = []
+        for i, j in zip(row_idx, col_idx):
+            match = matched[j]
+            m_cams, m_kpts, m_covs = [], [], []
+            for cam, m, det in zip(cams, match, detections):
+                if m.item() != -1:
+                    m_cams.append(cam)
+                    kpts, covs = det[0][m], det[1][m]
+                    m_kpts.append(kpts)
+                    m_covs.append(covs)
+            if row_idx >= num_track:
+                # Update the existing matched track.
+                track = self.tracks[i]
+            else:
+                # Create a new track if we have sufficient detections.
+                if len(m_cams) >= 2:
+                    # Create new track if we have more than two views.
+                    mean = camera.triangulate_undistorted(
+                        m_cams,
+                        [m.view(-1, 2) for m in m_kpts],
+                        [per_point_cov(c, 2) for c in m_covs]
+                    ).flatten()
+                    track = self.new_track(mean)
+                else:
+                    continue
+            self.update_track(track, m_cams, m_kpts, m_covs)
+            new_tracks.append(track)
+        for i in set(range(num_track)) - set(row_idx):
+            track = self.tracks[i]
+            # Check if we want to delete the track.
+            track.no_update()
+            if track.num_detection >= self.min_age and track.last_detection <= self.max_inv:
+                new_tracks.append(track)
+        self.add_time_stat("update", t_start)
+        self.tracks = new_tracks
 
 
 def build_constrained_physics(scale=100.0) -> kalman.ConstrainedPhysics:
