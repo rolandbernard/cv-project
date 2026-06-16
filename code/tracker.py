@@ -1,7 +1,6 @@
 
 import time
 import copy
-from itertools import count
 
 import torch
 import scipy.optimize
@@ -347,7 +346,7 @@ class Tracker:
         self.tracks = new_tracks
         self.add_time_stat("create_new", t_start)
 
-    def evaluate(self, source: source.VideoSource, progress=100) -> tuple[list[Camera], list[list[Track]], float]:
+    def evaluate(self, source: source.VideoSource, progress=100, limit=1000000) -> tuple[list[Camera], list[list[Track]], float]:
         """
         Run the complete evaluation loop using the given video source and return
         as a result the camera positions, tracks in each frame, and fps. This will
@@ -358,7 +357,7 @@ class Tracker:
         try:
             with torch.inference_mode():
                 source.start()
-                for i in count(1):
+                for i in range(1, limit + 1):
                     ts, imgs, cams = source.next_frames()
                     if ts is None or cams is None or imgs is None:
                         break

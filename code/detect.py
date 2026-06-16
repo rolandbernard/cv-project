@@ -17,7 +17,7 @@ class PoseDetector:
     def __init__(
         self, model_name: str = "yolo26n-pose", threshold: float = 0.5, kpt_threshold: float = 0.25,
         min_keypoint: int = 3, var_min: float = 16.0, var_vis: float = 0.005, var_inv: float = 5.0,
-        path: str = "./nets", compile: bool = True
+        use_bb: bool = True, path: str = "./nets", compile: bool = True
     ):
         model: PoseModel = YOLO(
             f"{path}/{model_name}.pt").model  # type: ignore
@@ -31,6 +31,7 @@ class PoseDetector:
         self.var_min = var_min
         self.var_vis = var_vis
         self.var_inv = var_inv
+        self.use_bb = use_bb
         self.num_keypoint = 17
 
     def detect_base(self, images: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
@@ -49,7 +50,7 @@ class PoseDetector:
                 valid[:, 2:4] - valid[:, 0:2], dim=1, keepdim=True)
             vis = torch.clamp(
                 (valid_points[:, :, 2] - self.kpt_threshold) / (1.0 - self.kpt_threshold), min=0)
-            var = self.var_min + bb_size * bb_size * \
+            var = self.var_min + (bb_size * bb_size if self.use_bb else 1) * \
                 (self.var_vis / (vis + self.var_vis / self.var_inv))
             results.append((
                 valid_points[:, :, 0:2].reshape(-1, self.num_keypoint*2),

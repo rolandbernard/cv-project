@@ -1,5 +1,6 @@
 
 import time
+import copy
 import threading
 
 import cv2
@@ -49,13 +50,14 @@ class OfflineVideoSource(VideoSource):
     must be the same or this source will fail to start.
     """
 
-    def __init__(self, streams: list[str], cameras: None | list[Camera] = None):
+    def __init__(self, streams: list[str], cameras: None | list[Camera] = None, resize: None | tuple[int, int] = None):
         """
         Create a new offline video source. A list of streams pointing to video
         files must be given together with associated camera parameters.
         """
         self.streams = streams
         self.cameras = cameras or [Camera() for _ in streams]
+        self.resize = resize
 
     def start(self):
         self.caps = [cv2.VideoCapture(s) for s in self.streams]
@@ -72,17 +74,23 @@ class OfflineVideoSource(VideoSource):
 
     def next_frames(self) -> tuple[None, None, None] | tuple[float, list[torch.Tensor], list[Camera]]:
         device = self.cameras[0].intrinsic.device
+        cameras = []
         frames = []
-        for cap in self.caps:
+        for cam, cap in zip(self.cameras, self.caps):
             if not cap.isOpened():
                 return None, None, None
             success, frame = cap.read()
             if not success:
                 return None, None, None
+            if self.resize is not None:
+                cam = copy.copy(cam)
+                cam.resize((frame.shape[1], frame.shape[0]), self.resize)
+                frame = cv2.resize(frame, self.resize)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(torch.tensor(frame, device=device))
+            cameras.append(cam)
         timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-        return timestamp, frames, self.cameras
+        return timestamp, frames, cameras
 
     def to(self, *args, **kargs):
         """ Apply the PyTorch `.to` method to all contained cameras. """
@@ -147,7 +155,7 @@ class OnlineVideoSource(VideoSource):
     all returned frames.
     """
 
-    def __init__(self, streams: list[int | str], cameras: None | list[Camera] = None):
+    def __init__(self, streams: list[int | str], cameras: None | list[Camera] = None, resize: None | tuple[int, int] = None):
         """
         Create a new online video source. A list of streams pointing to either
         the camera index, or possibly an ip camera address must be given,
@@ -155,6 +163,7 @@ class OnlineVideoSource(VideoSource):
         """
         self.streams = [ThreadedVideoStream(s) for s in streams]
         self.cameras = cameras or [Camera() for _ in streams]
+        self.resize = resize
 
     def start(self):
         for stream in self.streams:
@@ -166,15 +175,21 @@ class OnlineVideoSource(VideoSource):
 
     def next_frames(self) -> tuple[None, None, None] | tuple[float, list[torch.Tensor], list[Camera]]:
         device = self.cameras[0].intrinsic.device
+        cameras = []
         frames = []
         timestamps = []
-        for cap in self.streams:
+        for cam, cap in zip(self.cameras, self.streams):
             timestamp, frame = cap.next_frame()
             if timestamp is None or frame is None:
                 return None, None, None
+            if self.resize is not None:
+                cam = copy.copy(cam)
+                cam.resize((frame.shape[1], frame.shape[0]), self.resize)
+                frame = cv2.resize(frame, self.resize)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(torch.tensor(frame, device=device))
             timestamps.append(timestamp)
+            cameras.append(cam)
         return float(np.median(timestamps)), frames, self.cameras
 
     def to(self, *args, **kargs):
