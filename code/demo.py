@@ -55,15 +55,15 @@ def estimate_camera_params(img1, img2, distance=None):
     des1, des2 = rootsift(des1), rootsift(des2)
     # Perform matching using features
     flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=100))
-    raw_matches = flann.knnMatch(des1, des2, k=2)  # type: ignore
-    matches = [m for m, n in raw_matches if m.distance < 0.75 * n.distance]
-    if len(matches) < 15:
-        matches = [m for m, n in raw_matches if m.distance < 0.85 * n.distance]
-    if len(matches) < 8:
+    ms = flann.knnMatch(des1, des2, k=2)  # type: ignore
+    gms = [m for m, n in ms if m.distance < 0.75 * n.distance]
+    if len(gms) < 15:
+        gms = [m for m, n in ms if m.distance < 0.85 * n.distance]
+    if len(gms) < 8:
         print("Not enough feature matches.")
         exit(1)
-    pts1 = np.array([kp1[m.queryIdx].pt for m in matches])
-    pts2 = np.array([kp2[m.trainIdx].pt for m in matches])
+    pts1 = np.array([kp1[m.queryIdx].pt for m in gms])
+    pts2 = np.array([kp2[m.trainIdx].pt for m in gms])
     # Filter out outliers using fundamental matrix
     _, mask = cv2.findFundamentalMat(
         pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.9999, 50000)
@@ -174,14 +174,25 @@ def estimate_camera_params_moge(img1, img2, distance=None):
     K2[0, :] *= w2
     K2[1, :] *= h2
     # Find matching features in the two images
-    sift = cv2.SIFT_create(nfeatures=5000)  # type: ignore
+    print("Computing initial camera parameters...")
+    sift = cv2.SIFT_create(  # type: ignore
+        nfeatures=10000, contrastThreshold=0.01, edgeThreshold=15)
     kp1, des1 = sift.detectAndCompute(
         cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY), None)
     kp2, des2 = sift.detectAndCompute(
         cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY), None)
-    bf = cv2.BFMatcher()
-    ms = bf.knnMatch(des1, des2, k=2)
-    gms = [m for m, n in ms if m.distance < 0.7 * n.distance]
+    if des1 is None or des2 is None:
+        print("No features found.")
+        exit(1)
+    des1, des2 = rootsift(des1), rootsift(des2)
+    flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=100))
+    ms = flann.knnMatch(des1, des2, k=2)  # type: ignore
+    gms = [m for m, n in ms if m.distance < 0.75 * n.distance]
+    if len(gms) < 15:
+        gms = [m for m, n in ms if m.distance < 0.85 * n.distance]
+    if len(gms) < 8:
+        print("Not enough feature matches.")
+        exit(1)
     # Collect predicted 3D location for all matches if seen as valid
     p1_3d, p2_3d = [], []
     pm1, pm2 = out1["points"].cpu().numpy(), out2["points"].cpu().numpy()
@@ -193,6 +204,7 @@ def estimate_camera_params_moge(img1, img2, distance=None):
             p1_3d.append(pm1[v1, u1])
             p2_3d.append(pm2[v2, u2])
     p1_3d, p2_3d = np.array(p1_3d), np.array(p2_3d)
+    print(f"Found {p1_3d.shape[0]} matches.")
     # Randomized algorithm to find inliers
     best_R, best_t, bi = np.eye(3), np.zeros(3), []
     for _ in range(500):
@@ -207,20 +219,20 @@ def estimate_camera_params_moge(img1, img2, distance=None):
             R = Vt.T @ U.T
         t_vec = cd - R @ cs
         df = p1_3d - (p2_3d @ R.T + t_vec)
-        inliers = np.where(np.sum(df**2, 1) < 0.01)[0]
+        inliers = np.where(np.sum(df**2, 1) < 0.1)[0]
         if len(inliers) > len(bi):
             bi, best_R, best_t = inliers, R, t_vec
+    print(f"Found {len(bi)} inliners.")
     # Compute final rotation and translation using inliers
-    if len(bi) >= 3:
-        s, d = p2_3d[bi], p1_3d[bi]
-        cs, cd = np.mean(s, 0), np.mean(d, 0)
-        H = (s - cs).T @ (d - cd)
-        U, _, Vt = np.linalg.svd(H)
+    s, d = p2_3d[bi], p1_3d[bi]
+    cs, cd = np.mean(s, 0), np.mean(d, 0)
+    H = (s - cs).T @ (d - cd)
+    U, _, Vt = np.linalg.svd(H)
+    best_R = Vt.T @ U.T
+    if np.linalg.det(best_R) < 0:
+        Vt[2, :] *= -1
         best_R = Vt.T @ U.T
-        if np.linalg.det(best_R) < 0:
-            Vt[2, :] *= -1
-            best_R = Vt.T @ U.T
-        best_t = cd - best_R @ cs
+    best_t = cd - best_R @ cs
     cb = np.linalg.norm(best_t)
     print(f"MoGe metric baseline: {cb:.2f}m.")
     if distance is not None and cb > 1e-6:
