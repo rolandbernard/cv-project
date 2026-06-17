@@ -262,6 +262,8 @@ if __name__ == "__main__":
                         help="Do not use rigid body constraints")
     parser.add_argument("--cross-first", action="store_true",
                         help="Match using cross-view association first")
+    parser.add_argument("--no-cloud", action="store_true",
+                        help="Do not add point clouds to the visualization")
     args = parser.parse_args()
     urls = [args.url1, args.url2]
     is_offline = all(os.path.isfile(u) for u in urls)
@@ -313,7 +315,7 @@ if __name__ == "__main__":
     tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
     tracker = tracker_cls(detector, physics)
     player = LiveSkeletonPlayer(cameras)
-    if clouds is not None:
+    if clouds is not None and not args.no_cloud:
         for pts, clrs in clouds:
             player.add_point_cloud(pts, clrs)
     last_ts = ts
