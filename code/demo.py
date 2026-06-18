@@ -27,26 +27,20 @@ except ImportError:
     MOGE_AVAILABLE = False
 
 
-def rootsift(des):
-    if des is None:
-        return None
+def rootsift(des: np.ndarray) -> np.ndarray:
     des /= (des.sum(axis=1, keepdims=True) + 1e-7)
     return np.sqrt(des)
 
 
-def estimate_camera_params(img1, img2, K1=None, K2=None):
-    """ Estimate intrinsic and extrinsic camera parameters from two images. """
-    h1, w1 = img1.shape[:2]
-    h2, w2 = img2.shape[:2]
-    cx1, cy1 = w1 / 2.0, h1 / 2.0
-    cx2, cy2 = w2 / 2.0, h2 / 2.0
+def match_image_features(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    """ Create a set of point correspondences between two images. """
     # Extract features from the images
     sift = cv2.SIFT_create(  # type: ignore
         nfeatures=10000, contrastThreshold=0.01, edgeThreshold=15)
     kp1, des1 = sift.detectAndCompute(
-        cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY), None)
+        cv2.cvtColor(img1.numpy(), cv2.COLOR_RGB2GRAY), None)
     kp2, des2 = sift.detectAndCompute(
-        cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY), None)
+        cv2.cvtColor(img2.numpy(), cv2.COLOR_RGB2GRAY), None)
     if des1 is None or des2 is None:
         print("No features found.")
         exit(1)
@@ -54,22 +48,24 @@ def estimate_camera_params(img1, img2, K1=None, K2=None):
     # Perform matching using features
     flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=100))
     ms = flann.knnMatch(des1, des2, k=2)  # type: ignore
-    gms = [m for m, n in ms if m.distance < 0.75 * n.distance]
-    if len(gms) < 15:
-        gms = [m for m, n in ms if m.distance < 0.85 * n.distance]
-    if len(gms) < 8:
-        print("Not enough feature matches.")
-        exit(1)
-    pts1 = np.array([kp1[m.queryIdx].pt for m in gms])
-    pts2 = np.array([kp2[m.trainIdx].pt for m in gms])
+    gms = sorted(ms, key=lambda pt: pt[0].distance / pt[1].distance)[:200]
+    pts1 = np.array([kp1[m.queryIdx].pt for m, _ in gms])
+    pts2 = np.array([kp2[m.trainIdx].pt for m, _ in gms])
+    return pts1, pts2
+
+
+def estimate_camera_params(
+    img1: torch.Tensor, img2: torch.Tensor, K1: None | torch.Tensor = None, K2: None | torch.Tensor = None
+):
+    """ Estimate intrinsic and extrinsic camera parameters from two images. """
+    pts1, pts2 = match_image_features(img1, img2)
     # Filter out outliers using fundamental matrix
-    _, mask = cv2.findFundamentalMat(
+    F, mask = cv2.findFundamentalMat(
         pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.9999, 50000)
     if mask is None:
         print("Fundamental matrix estimation failed.")
         exit(1)
     inliers1, inliers2 = pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
-
     if K1 is None or K2 is None:
         # Optimize focal lengths and center points
         def epipolar_loss(params):
@@ -102,7 +98,7 @@ def estimate_camera_params(img1, img2, K1=None, K2=None):
                 (0.5 * w1, 3 * w1), (w1 * 0.4, w1 * 0.6), (h1 * 0.4, h1 * 0.6),
                 (0.5 * w2, 3 * w2), (w2 * 0.4, w2 * 0.6), (h2 * 0.4, h2 * 0.6)
             ],
-            method='Nelder-Mead'
+            method="Nelder-Mead"
         )
         f1, cx1, cy1, f2, cx2, cy2 = res.x
         K1 = np.array([[f1, 0, cx1], [0, f1, cy1],
@@ -151,45 +147,40 @@ def estimate_camera_params(img1, img2, K1=None, K2=None):
     return K1, K2, R, t
 
 
-def correct_moge_points(moge_points: torch.Tensor, K: torch.Tensor) -> torch.Tensor:
-    """ Corrects MoGe-2 3D points using ground-truth camera intrinsics. """
-    H, W, _ = moge_points.shape
+def points_from_depth(depth: torch.Tensor, K: torch.Tensor, scale: float | torch.Tensor) -> torch.Tensor:
+    """ Unproject points using depth values and a scale. """
+    height, width = depth.shape
     v, u = torch.meshgrid(
-        torch.arange(H, device=moge_points.device),
-        torch.arange(W, device=moge_points.device),
-        indexing='ij'
-    )
-    z = moge_points[..., 2]
-    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-    return torch.stack([(u - cx) * z / fx, (v - cy) * z / fy, z], dim=-1)
+        torch.arange(height), torch.arange(width), indexing="ij")
+    pts = torch.stack([u, v, torch.ones_like(depth)], dim=-1) * depth * scale
+    return torch.linalg.solve(K, pts.unsqueeze(-1)).squeeze(-1)
 
 
-def estimate_camera_params_moge(img1, img2, K1=None, K2=None):
-    """ Estimate camera parameters using MoGe-2 model. """
-    if not MOGE_AVAILABLE:
-        print("MoGe-2 not found.")
-        exit(1)
-    # Generate intrinsic estimates and point cloud using MoGe-2
-    print("Loading MoGe-2...")
-    model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
-    model.to(util.DEVICE)
-    model.eval()
-    p_img1 = (torch.from_numpy(img1).to(torch.float32) / 255.0) \
-        .permute(2, 0, 1).to(util.DEVICE)
-    p_img2 = (torch.from_numpy(img2).to(torch.float32) / 255.0) \
-        .permute(2, 0, 1).to(util.DEVICE)
+def evaluate_moge(model, img: torch.Tensor, K: None | torch.Tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """ Evaluate the MoGe-2 model on the given image. """
+    height, width = img.shape[:2]
+    p_img = (img.to(torch.float32) / 255.0).permute(2, 0, 1).to(util.DEVICE)
+    fov_x = torch.rad2deg(2 * torch.atan(width / (2 * K[0, 0]))) \
+        if K is not None else None
     with torch.inference_mode():
-        out1, out2 = model.infer(p_img1), model.infer(p_img2)
-    h1, w1 = img1.shape[:2]
-    h2, w2 = img2.shape[:2]
-    if K1 is None:
-        K1 = out1["intrinsics"].cpu().numpy()
-        K1[0, :] *= w1
-        K1[1, :] *= h1
-    if K2 is None:
-        K2 = out2["intrinsics"].cpu().numpy()
-        K2[0, :] *= w2
-        K2[1, :] *= h2
+        out = model.infer(p_img, fov_x=fov_x)
+    depth, msk = out["depth"].cpu(), out["mask"].cpu()
+    if K is None:
+        K: torch.Tensor = out["intrinsics"].cpu()
+        K[0, :] *= width
+        K[1, :] *= height
+    # Compute point locations (missing the application of the intrinsics).
+    v, u = torch.meshgrid(
+        torch.arange(height), torch.arange(width), indexing="ij")
+    pts = torch.stack([u, v, torch.ones_like(depth)], dim=-1) * depth
+    return pts, msk, K
+
+
+def estimate_camera_params_moge(
+    img1: torch.Tensor, img2: torch.Tensor, pts1: torch.Tensor, pts2: torch.Tensor,
+    msk1: torch.Tensor, msk2: torch.Tensor, K1: torch.Tensor, K2: torch.Tensor
+):
+    """ Estimate camera parameters using point cloud augmented images. """
     # Find matching features in the two images
     print("Computing initial camera parameters...")
     sift = cv2.SIFT_create(  # type: ignore
@@ -215,9 +206,11 @@ def estimate_camera_params_moge(img1, img2, K1=None, K2=None):
     pm1, pm2 = out1["points"].cpu().numpy(), out2["points"].cpu().numpy()
     mk1, mk2 = out1["mask"].cpu().numpy(), out2["mask"].cpu().numpy()
     if K1 is not None:
-        pm1 = correct_moge_points(torch.from_numpy(pm1), torch.from_numpy(K1)).numpy()
+        pm1 = correct_moge_points(torch.from_numpy(
+            pm1), torch.from_numpy(K1)).numpy()
     if K2 is not None:
-        pm2 = correct_moge_points(torch.from_numpy(pm2), torch.from_numpy(K2)).numpy()
+        pm2 = correct_moge_points(torch.from_numpy(
+            pm2), torch.from_numpy(K2)).numpy()
     for m in gms:
         u1, v1 = map(int, kp1[m.queryIdx].pt)
         u2, v2 = map(int, kp2[m.trainIdx].pt)
@@ -265,10 +258,10 @@ if __name__ == "__main__":
     """ Main execution function for the demo. """
     parser = argparse.ArgumentParser(
         description="Cross-view 3D skeleton tracking demo.")
-    parser.add_argument("url1", help="URL or path to first video source")
-    parser.add_argument("url2", help="URL or path to second video source")
-    parser.add_argument("--cam1", help="Calibration file for first camera")
-    parser.add_argument("--cam2", help="Calibration file for second camera")
+    parser.add_argument("urls", nargs="+",
+                        help="URLs or paths to video sources")
+    parser.add_argument("--cams", nargs="+",
+                        help="Calibration files for cameras")
     parser.add_argument("--distance", type=float,
                         help="Known distance between cameras for scaling")
     parser.add_argument("--resize", type=int, nargs=2,
@@ -282,65 +275,76 @@ if __name__ == "__main__":
     parser.add_argument("--no-cloud", action="store_true",
                         help="Do not add point clouds to the visualization")
     args = parser.parse_args()
-    urls = [args.url1, args.url2]
+    urls = args.urls
     is_offline = all(os.path.isfile(u) for u in urls)
-    resize = tuple(args.resize) if args.resize is not None else None
     if is_offline:
-        source = OfflineVideoSource(urls, resize=resize)
+        source = OfflineVideoSource(urls)
     else:
-        source = OnlineVideoSource(urls, resize=resize)
+        source = OnlineVideoSource(urls)
     source.start()
+    # Wait some time to make sure all cameras are connected and get frames.
     print("Waiting for frames...")
-    ts, frames = None, None
-    for _ in range(10):
-        ts, frames, _ = source.next_frames()
-        if ts is not None:
-            break
-        time.sleep(0.1)
+    time.sleep(1)
+    ts, frames, _ = source.next_frames()
     if ts is None or frames is None:
         print("Failed to get initial frames.")
         exit(1)
-    img1, img2 = frames[0].cpu().numpy(), frames[1].cpu().numpy()
-    cam1 = Camera()
-    if args.cam1 is not None:
-        cam1.load_file(args.cam1)
-    cam2 = Camera()
-    if args.cam2 is not None:
-        cam2.load_file(args.cam2)
-    clouds = None
-    if not cam1.has_extrinsics() or not cam2.has_extrinsics():
-        print("Estimating parameters...")
-        K1_init = cam1.intrinsic.cpu().numpy() if args.cam1 else None
-        K2_init = cam2.intrinsic.cpu().numpy() if args.cam2 else None
-        if args.moge:
-            K1, K2, R, t, cloud1, cloud2 = estimate_camera_params_moge(
-                img1, img2, K1=K1_init, K2=K2_init)
-            clouds = [cloud1, cloud2]
-        else:
-            K1, K2, R, t = estimate_camera_params(
-                img1, img2, K1=K1_init, K2=K2_init)
-        print(f"K1:\n{K1}\nK2:\n{K2}\nR:\n{R}\nt:\n{t}")
-        cam1.intrinsic = torch.from_numpy(K1).float()
-        cam2.intrinsic = torch.from_numpy(K2).float()
-        cam2.rotation = torch.from_numpy(R.T).float()
-        cam2.translation = torch.from_numpy(-R.T @ t.flatten()).float()
-    else:
-        print("Using provided camera parameters.")
-        if args.moge:
-            _, _, _, _, cloud1, cloud2 = estimate_camera_params_moge(
-                img1, img2, K1=cam1.intrinsic.numpy(), K2=cam2.intrinsic.numpy())
-            clouds = [cloud1, cloud2]
-    if args.distance is not None:
-        dist = torch.linalg.vector_norm(cam1.center() - cam2.center()).item()
-        cam1.scale(args.distance / dist)
-        cam2.scale(args.distance / dist)
-    cameras = [cam1, cam2]
+    cameras = [Camera() for _ in range(len(urls))]
+    if args.cams is not None:
+        for cam, file in zip(cameras, args.cams):
+            cam.load_file(file)
+    clouds = [None for _ in range(len(cameras))]
+    moge_model = None
+    if args.moge:
+        if not MOGE_AVAILABLE:
+            print("MoGe-2 not found.")
+            exit(1)
+        print("Loading MoGe-2...")
+        moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
+        moge_model.to(util.DEVICE)
+        moge_model.eval()
+    # Estimate parameters for all cameras with respect to the first camera.
+    for i in range(1, len(cameras)):
+        if not cameras[i].has_extrinsics():
+            print(f"Estimating parameters for camera {i}...")
+            K0_init = cameras[0].intrinsic.cpu().numpy() if (
+                args.cams and len(args.cams) > 0) else None
+            Ki_init = cameras[i].intrinsic.cpu().numpy() if (
+                args.cams and len(args.cams) > i) else None
+            if args.moge:
+                K0, Ki, R, t, cloud0, cloudi = estimate_camera_params_moge(
+                    imgs[0], imgs[i], moge_model, K1=K0_init, K2=Ki_init)
+                clouds[0] = cloud0
+                clouds[i] = cloudi
+            else:
+                K0, Ki, R, t = estimate_camera_params(
+                    imgs[0], imgs[i], K1=K0_init, K2=Ki_init)
+
+            print(f"Camera 0 -> {i} parameters:")
+            print(f"K0:\n{K0}\nKi:\n{Ki}\nR:\n{R}\nt:\n{t}")
+            cameras[0].intrinsic = torch.from_numpy(K0).float()
+            cameras[i].intrinsic = torch.from_numpy(Ki).float()
+            cameras[i].rotation = torch.from_numpy(R.T).float()
+            cameras[i].translation = torch.from_numpy(
+                -R.T @ t.flatten()).float()
+        elif args.moge:
+            # Still run MoGe for clouds if requested even if extrinsics are provided
+            clouds[i] = cloudi
+    if args.distance is not None and len(cameras) >= 2:
+        dist = torch.linalg.vector_norm(
+            cameras[0].center() - cameras[1].center()).item()
+        scale = args.distance / dist
+        for cam in cameras:
+            cam.scale(scale)
     player = LiveSkeletonPlayer(cameras)
-    if clouds is not None and not args.no_cloud:
-        for cam, (pts, clrs) in zip(cameras, clouds):
-            pts = cam.camera_to_world(torch.from_numpy(pts)).numpy()
-            player.add_point_cloud(pts, clrs)
+    if not args.no_cloud:
+        for cam, cloud in zip(cameras, clouds):
+            if cloud is not None:
+                pts, clrs = cloud
+                pts = cam.camera_to_world(torch.from_numpy(pts)).numpy()
+                player.add_point_cloud(pts, clrs)
     source.cameras = cameras
+    source.resize = tuple(args.resize) if args.resize is not None else None
     source.to(util.DEVICE)
     detector = PoseDetector()
     detector.to(util.DEVICE)
@@ -356,7 +360,7 @@ if __name__ == "__main__":
             break
         dt = ts - last_ts
         if dt <= 0:
-            # We don't have any new frames available.
+            # We don"t have any new frames available.
             time.sleep(0.01)
             continue
         tracker.predict(dt)
@@ -370,5 +374,5 @@ if __name__ == "__main__":
             stacked = cv2.resize(stacked, (w_new, h_new))
         cv2.imshow("Streams", stacked)
         last_ts = ts
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
