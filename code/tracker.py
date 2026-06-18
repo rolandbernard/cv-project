@@ -496,7 +496,7 @@ def build_constrained_physics(scale=100.0, sym=True) -> kalman.ConstrainedPhysic
         [i, j, 2*nk + (util.RIGID_SKELETON_SYM[k] if sym else k)]
         for k, (i, j) in enumerate(links)
     ], dtype=torch.long)
-    point_mix = torch.tensor([[5, 6]], dtype=torch.long)
+    point_mix = torch.tensor([[5, 6], [11, 12]], dtype=torch.long)
     constr_cov = torch.eye(num_links) * (0.001 * scale)**2
     return kalman.ConstrainedPhysics(
         dyn_mat, dyn_cov, init_mean, init_cov, constraints, point_mix, constr_cov)

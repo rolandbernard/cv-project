@@ -88,9 +88,7 @@ class SalsaDataset:
                    for i in (cams if isinstance(cams, list) else range(cams))]
         cameras = []
         for i in cams if isinstance(cams, list) else range(cams):
-            camera = Camera()
-            camera.load_ini(f"{self.path}/cam{i}.ini")
-            cameras.append(camera)
+            cameras.append(Camera.from_file(f"{self.path}/cam{i}.ini"))
         return source.OfflineVideoSource(streams, cameras)
 
 
@@ -261,12 +259,7 @@ class CmuPanopticDataset:
 
     def load_cam(self, calib, name: str) -> Camera:
         cam_calib = [c for c in calib["cameras"] if c["name"] == name][0]
-        return Camera(
-            rotation=torch.tensor(cam_calib["R"]),
-            translation=torch.tensor(cam_calib["t"]).squeeze(-1),
-            intrinsic=torch.tensor(cam_calib["K"]),
-            distortion=torch.tensor(cam_calib["distCoef"]),
-        )
+        return Camera.from_dict(cam_calib)
 
     def get_source(self, scene: str, num_hd_cams: int = 0, num_vga_cams: int = 4) -> source.OfflineVideoSource:
         """

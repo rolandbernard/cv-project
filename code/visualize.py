@@ -47,7 +47,6 @@ class BaseSkeletonPlayer:
         for cam in cameras:
             center = -np.array(cam["R"]).T @ np.array(cam["t"]).flatten()
             centers.append(center)
-
         for i, c0 in enumerate(centers):
             for j in range(i + 1, len(centers)):
                 dist = np.linalg.norm(c0 - centers[j]).item()
@@ -122,7 +121,10 @@ class BaseSkeletonPlayer:
         kpts = np.array(track["kpts"])
         if len(kpts) == 17:
             return np.concatenate([
-                kpts, kpts[5:7].mean(axis=0, keepdims=True)
+                kpts,
+                # Add the two COCO19 keypoints that have been discarded.
+                kpts[5:7].mean(axis=0, keepdims=True),
+                kpts[11:13].mean(axis=0, keepdims=True),
             ])
         return kpts
 

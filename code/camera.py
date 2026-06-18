@@ -1,6 +1,8 @@
 
+import json
 import configparser
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -24,6 +26,18 @@ class Camera:
     # Intrinsics
     intrinsic: torch.Tensor = torch.eye(3)
     distortion: torch.Tensor = torch.zeros(5)
+
+    @classmethod
+    def from_dict(cls, data):
+        cam = Camera()
+        cam.from_dict(data)
+        return cam
+
+    @classmethod
+    def from_file(cls, path: str):
+        cam = Camera()
+        cam.load_file(path)
+        return cam
 
     def load_ini(self, path: str):
         """
@@ -82,16 +96,41 @@ class Camera:
                 float(section["k3"]),
             ])
 
+    def load_dict(self, dict):
+        """ Load parameters from a dictionary. """
+        if "R" in dict and "t" in dict:
+            self.rotation = torch.tensor(dict["R"])
+            self.translation = torch.tensor(dict["t"]).flatten()
+        if "K" in dict:
+            self.intrinsic = torch.tensor(dict["K"])
+        if "distCoef" in dict:
+            self.distortion = torch.tensor(dict["distCoef"])
+
+    def load_json(self, path: str):
+        """ Load parameters from a JSON file. """
+        with open(path, "r") as file:
+            self.load_dict(json.load(file))
+
+    def load_file(self, path: str):
+        """ Load parameters from a file. Detect format from file extension. """
+        if path.endswith(".ini"):
+            self.load_ini(path)
+        elif path.endswith(".json"):
+            self.load_json(path)
+        else:
+            raise NotImplementedError("unable to load calibration file format")
+
+    def has_extrinsics(self) -> bool:
+        """ Check whether this has non-default extrinsic parameters. """
+        return not torch.allclose(self.rotation, torch.eye(3)) \
+            or not torch.allclose(self.translation, torch.zeros(3))
+
     def scale(self, scale: float):
-        """
-        Scale the camera extrinsics by the given scale.
-        """
+        """ Scale the camera extrinsics by the given scale. """
         self.translation = scale * self.translation
 
     def resize(self, old: tuple[int, int], new: tuple[int, int]):
-        """
-        Modify the camera intrinsics to accommodate a image resizing. 
-        """
+        """ Modify the camera intrinsics to accommodate a image resizing. """
         s_x, s_y = new[0] / old[0], new[1] / old[1]
         self.intrinsic = torch.stack([
             s_x * self.intrinsic[0],
@@ -109,6 +148,20 @@ class Camera:
             self.intrinsic[:, 2] - torch.tensor([x, y, 0], dtype=torch.float),
         ], dim=1)
 
+    def center(self) -> torch.Tensor:
+        """ Compute the camera center with respect to the world. """
+        return -self.rotation.mT @ self.translation
+
+    def camera_to_world(self, points: torch.Tensor) -> torch.Tensor:
+        """ Convert from camera for world coordinates. """
+        return (self.rotation.mT @ (points.view(-1, 3) - self.translation)
+                .unsqueeze(-1)).view_as(points)
+
+    def world_to_camera(self, points: torch.Tensor) -> torch.Tensor:
+        """ Convert from world for camera coordinates. """
+        return ((self.rotation @ points.view(-1, 3, 1)).squeeze(-1)
+                + self.translation).view_as(points)
+
     def project_pinhole(self, points: torch.Tensor, eps=1e-5) -> torch.Tensor:
         """
         Project a set of 3d points to 2d locations on the cameras image plane.
@@ -121,8 +174,7 @@ class Camera:
         [0.5, 0.5]
         """
         *Bs, M = points.shape
-        points_cam = (self.rotation @ points.view(-1, 3, 1)).squeeze(-1) \
-            + self.translation
+        points_cam = self.world_to_camera(points)
         xy, z = points_cam[..., 0:2], points_cam[..., 2:3]
         z = torch.clamp(z, min=eps)
         return (xy / z).view(*Bs, M//3*2)

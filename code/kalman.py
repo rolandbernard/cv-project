@@ -194,7 +194,7 @@ def batched_jacobian(f: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor)
     *Bs, N = x.shape
     jac, val = torch.vmap(torch.func.jacrev(func, has_aux=True))(x.view(-1, N))
     *_, M, N = jac.shape
-    return jac.reshape(*Bs, M, N), val.reshape(*Bs, M)
+    return jac.view(*Bs, M, N), val.view(*Bs, M)
 
 
 def eupdate(

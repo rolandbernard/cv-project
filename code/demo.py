@@ -34,10 +34,8 @@ def rootsift(des):
     return np.sqrt(des)
 
 
-def estimate_camera_params(img1, img2, distance=None):
+def estimate_camera_params(img1, img2, K1=None, K2=None):
     """ Estimate intrinsic and extrinsic camera parameters from two images. """
-    if distance is None:
-        distance = 1.0
     h1, w1 = img1.shape[:2]
     h2, w2 = img2.shape[:2]
     cx1, cy1 = w1 / 2.0, h1 / 2.0
@@ -72,42 +70,46 @@ def estimate_camera_params(img1, img2, distance=None):
         exit(1)
     inliers1, inliers2 = pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
 
-    # Optimize focal lengths and center points
-    def epipolar_loss(params):
-        f1_c, cx1_c, cy1_c, f2_c, cx2_c, cy2_c = params
-        K1_c = np.array([[f1_c, 0, cx1_c], [0, f1_c, cy1_c], [0, 0, 1]])
-        K2_c = np.array([[f2_c, 0, cx2_c], [0, f2_c, cy2_c], [0, 0, 1]])
-        p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1_c, None)
-        p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2_c, None)
-        E_c, _ = cv2.findEssentialMat(
-            p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
-        if E_c is None or E_c.shape != (3, 3):
-            return 1e10
-        F_px = np.linalg.inv(K2_c).T @ E_c @ np.linalg.inv(K1_c)
-        pts1_h = np.column_stack([inliers1, np.ones(len(inliers1))])
-        pts2_h = np.column_stack([inliers2, np.ones(len(inliers2))])
-        l2 = (F_px @ pts1_h.T).T
-        l1 = (F_px.T @ pts2_h.T).T
-        alg_err = np.sum(pts2_h * l2, axis=1)
-        dist_err = (alg_err**2) / (l2[:, 0]**2 + l2[:, 1]**2 + 1e-8) + \
-                   (alg_err**2) / (l1[:, 0]**2 + l1[:, 1]**2 + 1e-8)
-        return np.mean(dist_err)
+    if K1 is None or K2 is None:
+        # Optimize focal lengths and center points
+        def epipolar_loss(params):
+            f1_c, cx1_c, cy1_c, f2_c, cx2_c, cy2_c = params
+            K1_c = np.array([[f1_c, 0, cx1_c], [0, f1_c, cy1_c], [0, 0, 1]])
+            K2_c = np.array([[f2_c, 0, cx2_c], [0, f2_c, cy2_c], [0, 0, 1]])
+            p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1_c, None)
+            p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2_c, None)
+            E_c, _ = cv2.findEssentialMat(
+                p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
+            if E_c is None or E_c.shape != (3, 3):
+                return 1e10
+            F_px = np.linalg.inv(K2_c).T @ E_c @ np.linalg.inv(K1_c)
+            pts1_h = np.column_stack([inliers1, np.ones(len(inliers1))])
+            pts2_h = np.column_stack([inliers2, np.ones(len(inliers2))])
+            l2 = (F_px @ pts1_h.T).T
+            l1 = (F_px.T @ pts2_h.T).T
+            alg_err = np.sum(pts2_h * l2, axis=1)
+            dist_err = (alg_err**2) / (l2[:, 0]**2 + l2[:, 1]**2 + 1e-8) + \
+                       (alg_err**2) / (l1[:, 0]**2 + l1[:, 1]**2 + 1e-8)
+            return np.mean(dist_err)
 
-    f1 = 1.25 * max(h1, w1)
-    f2 = 1.25 * max(h2, w2)
-    print("Optimizing intrinsics...")
-    res = opt.minimize(
-        epipolar_loss,
-        x0=[f1, cx1, cy1, f2, cx2, cy2],
-        bounds=[
-            (0.5 * w1, 3 * w1), (w1 * 0.4, w1 * 0.6), (h1 * 0.4, h1 * 0.6),
-            (0.5 * w2, 3 * w2), (w2 * 0.4, w2 * 0.6), (h2 * 0.4, h2 * 0.6)
-        ],
-        method='Nelder-Mead'
-    )
-    f1, cx1, cy1, f2, cx2, cy2 = res.x
-    K1 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]])
-    K2 = np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]])
+        f1 = 1.25 * max(h1, w1)
+        f2 = 1.25 * max(h2, w2)
+        print("Optimizing intrinsics...")
+        res = opt.minimize(
+            epipolar_loss,
+            x0=[f1, cx1, cy1, f2, cx2, cy2],
+            bounds=[
+                (0.5 * w1, 3 * w1), (w1 * 0.4, w1 * 0.6), (h1 * 0.4, h1 * 0.6),
+                (0.5 * w2, 3 * w2), (w2 * 0.4, w2 * 0.6), (h2 * 0.4, h2 * 0.6)
+            ],
+            method='Nelder-Mead'
+        )
+        f1, cx1, cy1, f2, cx2, cy2 = res.x
+        K1 = np.array([[f1, 0, cx1], [0, f1, cy1],
+                      [0, 0, 1]], dtype=np.float32)
+        K2 = np.array([[f2, 0, cx2], [0, f2, cy2],
+                      [0, 0, 1]], dtype=np.float32)
+
     p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1, None)
     p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2, None)
     E, final_mask = cv2.findEssentialMat(
@@ -143,13 +145,26 @@ def estimate_camera_params(img1, img2, distance=None):
     f1, cx1, cy1, f2, cx2, cy2 = res_ba.x[0:6]
     R, _ = cv2.Rodrigues(res_ba.x[6:9])
     t = res_ba.x[9:12]
-    t = (t / (np.linalg.norm(t) + 1e-7)) * distance
+    t = (t / (np.linalg.norm(t) + 1e-7))
     K1 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32)
     K2 = np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]], dtype=np.float32)
     return K1, K2, R, t
 
 
-def estimate_camera_params_moge(img1, img2, distance=None):
+def correct_moge_points(moge_points: torch.Tensor, K: torch.Tensor) -> torch.Tensor:
+    """ Corrects MoGe-2 3D points using ground-truth camera intrinsics. """
+    H, W, _ = moge_points.shape
+    v, u = torch.meshgrid(
+        torch.arange(H, device=moge_points.device),
+        torch.arange(W, device=moge_points.device),
+        indexing='ij'
+    )
+    z = moge_points[..., 2]
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    return torch.stack([(u - cx) * z / fx, (v - cy) * z / fy, z], dim=-1)
+
+
+def estimate_camera_params_moge(img1, img2, K1=None, K2=None):
     """ Estimate camera parameters using MoGe-2 model. """
     if not MOGE_AVAILABLE:
         print("MoGe-2 not found.")
@@ -167,12 +182,14 @@ def estimate_camera_params_moge(img1, img2, distance=None):
         out1, out2 = model.infer(p_img1), model.infer(p_img2)
     h1, w1 = img1.shape[:2]
     h2, w2 = img2.shape[:2]
-    K1 = out1["intrinsics"].cpu().numpy()
-    K1[0, :] *= w1
-    K1[1, :] *= h1
-    K2 = out2["intrinsics"].cpu().numpy()
-    K2[0, :] *= w2
-    K2[1, :] *= h2
+    if K1 is None:
+        K1 = out1["intrinsics"].cpu().numpy()
+        K1[0, :] *= w1
+        K1[1, :] *= h1
+    if K2 is None:
+        K2 = out2["intrinsics"].cpu().numpy()
+        K2[0, :] *= w2
+        K2[1, :] *= h2
     # Find matching features in the two images
     print("Computing initial camera parameters...")
     sift = cv2.SIFT_create(  # type: ignore
@@ -197,6 +214,10 @@ def estimate_camera_params_moge(img1, img2, distance=None):
     p1_3d, p2_3d = [], []
     pm1, pm2 = out1["points"].cpu().numpy(), out2["points"].cpu().numpy()
     mk1, mk2 = out1["mask"].cpu().numpy(), out2["mask"].cpu().numpy()
+    if K1 is not None:
+        pm1 = correct_moge_points(torch.from_numpy(pm1), torch.from_numpy(K1)).numpy()
+    if K2 is not None:
+        pm2 = correct_moge_points(torch.from_numpy(pm2), torch.from_numpy(K2)).numpy()
     for m in gms:
         u1, v1 = map(int, kp1[m.queryIdx].pt)
         u2, v2 = map(int, kp2[m.trainIdx].pt)
@@ -235,12 +256,6 @@ def estimate_camera_params_moge(img1, img2, distance=None):
     best_t = cd - best_R @ cs
     cb = np.linalg.norm(best_t)
     print(f"MoGe metric baseline: {cb:.2f}m.")
-    if distance is not None and cb > 1e-6:
-        # Scale distance between cameras to used defined value
-        scl = distance / cb
-        best_t *= scl
-        pm1 *= scl
-        pm2 *= scl
     pts1_v, clrs1_v = pm1.reshape(-1, 3), img1.reshape(-1, 3)
     pts2_v, clrs2_v = pm2.reshape(-1, 3), img2.reshape(-1, 3)
     return K1, K2, best_R, best_t, (pts1_v, clrs1_v), (pts2_v, clrs2_v)
@@ -250,8 +265,10 @@ if __name__ == "__main__":
     """ Main execution function for the demo. """
     parser = argparse.ArgumentParser(
         description="Cross-view 3D skeleton tracking demo.")
-    parser.add_argument("url1", help="URL or path to the first video source")
-    parser.add_argument("url2", help="URL or path to the second video source")
+    parser.add_argument("url1", help="URL or path to first video source")
+    parser.add_argument("url2", help="URL or path to second video source")
+    parser.add_argument("--cam1", help="Calibration file for first camera")
+    parser.add_argument("--cam2", help="Calibration file for second camera")
     parser.add_argument("--distance", type=float,
                         help="Known distance between cameras for scaling")
     parser.add_argument("--resize", type=int, nargs=2,
@@ -267,7 +284,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     urls = [args.url1, args.url2]
     is_offline = all(os.path.isfile(u) for u in urls)
-    resize = tuple(args.resize) if args.resize else None
+    resize = tuple(args.resize) if args.resize is not None else None
     if is_offline:
         source = OfflineVideoSource(urls, resize=resize)
     else:
@@ -284,27 +301,45 @@ if __name__ == "__main__":
         print("Failed to get initial frames.")
         exit(1)
     img1, img2 = frames[0].cpu().numpy(), frames[1].cpu().numpy()
-    print("Estimating parameters...")
+    cam1 = Camera()
+    if args.cam1 is not None:
+        cam1.load_file(args.cam1)
+    cam2 = Camera()
+    if args.cam2 is not None:
+        cam2.load_file(args.cam2)
     clouds = None
-    if args.moge:
-        K1, K2, R, t, cloud1, cloud2 = estimate_camera_params_moge(
-            img1, img2, args.distance)
-        pts2_world = (R @ cloud2[0].T + t.reshape(3, 1)).T
-        clouds = [(cloud1[0], cloud1[1]), (pts2_world, cloud2[1])]
+    if not cam1.has_extrinsics() or not cam2.has_extrinsics():
+        print("Estimating parameters...")
+        K1_init = cam1.intrinsic.cpu().numpy() if args.cam1 else None
+        K2_init = cam2.intrinsic.cpu().numpy() if args.cam2 else None
+        if args.moge:
+            K1, K2, R, t, cloud1, cloud2 = estimate_camera_params_moge(
+                img1, img2, K1=K1_init, K2=K2_init)
+            clouds = [cloud1, cloud2]
+        else:
+            K1, K2, R, t = estimate_camera_params(
+                img1, img2, K1=K1_init, K2=K2_init)
+        print(f"K1:\n{K1}\nK2:\n{K2}\nR:\n{R}\nt:\n{t}")
+        cam1.intrinsic = torch.from_numpy(K1).float()
+        cam2.intrinsic = torch.from_numpy(K2).float()
+        cam2.rotation = torch.from_numpy(R.T).float()
+        cam2.translation = torch.from_numpy(-R.T @ t.flatten()).float()
     else:
-        K1, K2, R, t = estimate_camera_params(img1, img2, args.distance)
-    print(f"K1:\n{K1}\nK2:\n{K2}\nR:\n{R}\nt:\n{t}")
-    cam1 = Camera(
-        rotation=torch.eye(3),
-        translation=torch.zeros(3),
-        intrinsic=torch.from_numpy(K1).float()
-    )
-    cam2 = Camera(
-        rotation=torch.from_numpy(R.T).float(),
-        translation=torch.from_numpy(-R.T @ t.flatten()).float(),
-        intrinsic=torch.from_numpy(K2).float()
-    )
+        print("Using provided camera parameters.")
+        if args.moge:
+            _, _, _, _, cloud1, cloud2 = estimate_camera_params_moge(
+                img1, img2, K1=cam1.intrinsic.numpy(), K2=cam2.intrinsic.numpy())
+            clouds = [cloud1, cloud2]
+    if args.distance is not None:
+        dist = torch.linalg.vector_norm(cam1.center() - cam2.center()).item()
+        cam1.scale(args.distance / dist)
+        cam2.scale(args.distance / dist)
     cameras = [cam1, cam2]
+    player = LiveSkeletonPlayer(cameras)
+    if clouds is not None and not args.no_cloud:
+        for cam, (pts, clrs) in zip(cameras, clouds):
+            pts = cam.camera_to_world(torch.from_numpy(pts)).numpy()
+            player.add_point_cloud(pts, clrs)
     source.cameras = cameras
     source.to(util.DEVICE)
     detector = PoseDetector()
@@ -314,10 +349,6 @@ if __name__ == "__main__":
     physics.to(util.DEVICE)
     tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
     tracker = tracker_cls(detector, physics)
-    player = LiveSkeletonPlayer(cameras)
-    if clouds is not None and not args.no_cloud:
-        for pts, clrs in clouds:
-            player.add_point_cloud(pts, clrs)
     last_ts = ts
     while True:
         ts, frames, _ = source.next_frames()
