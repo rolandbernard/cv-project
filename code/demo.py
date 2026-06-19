@@ -1,7 +1,7 @@
 
-import argparse
 import os
 import time
+import argparse
 
 import cv2
 import numpy as np
@@ -366,13 +366,8 @@ if __name__ == "__main__":
         tracker.predict(dt)
         tracker.update(cameras, frames)
         player.update(tracker.get_prediction())
-        stacked = np.vstack(
-            [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames])
-        if stacked.shape[0] > 800:
-            # Cap height to 800 pixels.
-            h_new, w_new = 800, int(stacked.shape[1] * 800 / stacked.shape[0])
-            stacked = cv2.resize(stacked, (w_new, h_new))
-        cv2.imshow("Streams", stacked)
+        cv2.imshow("Streams", np.concatenate(
+            [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames]))
         last_ts = ts
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break

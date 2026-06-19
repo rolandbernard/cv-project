@@ -1,6 +1,6 @@
 
 import os
-import sys
+import argparse
 
 from typing import Any
 
@@ -258,18 +258,21 @@ def load_from_files(main_file: str, gt_file: None | str = None) -> SkeletonPlaye
 
 
 if __name__ == "__main__":
-    if len(sys.argv) <= 1:
-        print(f"usage: python {sys.argv[0]} FILENAME [GT_FILENAME]")
+    """ Main execution of the visualization script. """
+    parser = argparse.ArgumentParser(
+        description="3D skeleton tracking visualization.")
+    parser.add_argument("path", help="Paths to recorded .json file")
+    parser.add_argument("--gt-path", help="Paths to ground truth .json file")
+    args = parser.parse_args()
+    if not os.path.isfile(args.path):
+        print(f"Unable to open tracking file '{args.path}'")
         exit(1)
-    if not os.path.isfile(sys.argv[1]):
-        print(f"unable to open tracking file '{sys.argv[1]}'")
-        exit(1)
-    cams, frames, fps, center, up = util.load_tracks(sys.argv[1])
+    cams, frames, fps, center, up = util.load_tracks(args.path)
     gt_frames = None
-    if len(sys.argv) > 2:
-        if not os.path.isfile(sys.argv[2]):
-            print(f"unable to open ground truth file '{sys.argv[2]}'")
+    if args.gt_path is not None:
+        if not os.path.isfile(args.gt_path):
+            print(f"Unable to open ground truth file '{args.gt_path}'")
             exit(1)
-        _, gt_frames, _, _, _ = util.load_tracks(sys.argv[2])
+        _, gt_frames, _, _, _ = util.load_tracks(args.gt_path)
     player = SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
     player.show()

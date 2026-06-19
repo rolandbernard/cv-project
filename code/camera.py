@@ -30,7 +30,7 @@ class Camera:
     @classmethod
     def from_dict(cls, data):
         cam = Camera()
-        cam.from_dict(data)
+        cam.load_dict(data)
         return cam
 
     @classmethod
@@ -300,6 +300,8 @@ class Camera:
             return self.translation.tolist()
         if key == "K":
             return self.intrinsic.tolist()
+        if key == "distCoef":
+            return self.distortion.tolist()
         raise KeyError
 
 
