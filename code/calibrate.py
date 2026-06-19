@@ -2,15 +2,14 @@
 import os
 import json
 import time
+import shutil
 import argparse
 from itertools import count
 
 import cv2
 import numpy as np
 import torch
-import torch.nn as nn
 
-import util
 from camera import Camera
 from source import OfflineVideoSource, OnlineVideoSource
 
@@ -81,7 +80,7 @@ if __name__ == "__main__":
             exit(1)
         if args.save_imgs is not None:
             if os.path.exists(args.save_imgs):
-                os.removedirs(args.save_imgs)
+                shutil.rmtree(args.save_imgs)
             os.makedirs(args.save_imgs, exist_ok=True)
         # Collect frames for calibration.
         record_next = False
@@ -142,31 +141,23 @@ if __name__ == "__main__":
         }))
     # If there is more than one camera, also determine camera extrinsics.
     if len(cameras) > 1:
+        height, width, _ = fst_frames[0].shape
         for i in range(1, len(cameras)):
             imgpts = [pts for pts in all_pts
                       if pts[0] is not None and pts[i] is not None]
-            pts0 = np.array([pts[0] for pts in imgpts]).reshape(-1, 2)
-            ptsi = np.array([pts[i] for pts in imgpts]).reshape(-1, 2)
-            _, _, R, t, _ = cv2.recoverPose(
-                pts0, ptsi,
+            pts0 = [pts[0] for pts in imgpts]
+            ptsi = [pts[i] for pts in imgpts]
+            # Fix intrinsics since we optimized the already above.
+            retval, _, _, _, _, R, t, E, F = cv2.stereoCalibrate(
+                [objp] * len(imgpts), pts0, ptsi,
                 cameras[0].intrinsic.numpy(), cameras[0].distortion.numpy(),
                 cameras[i].intrinsic.numpy(), cameras[i].distortion.numpy(),
+                (width, height),
+                flags=cv2.CALIB_FIX_INTRINSIC
             )
             cameras[i].rotation = torch.from_numpy(R.astype(np.float32))
             cameras[i].translation = torch.from_numpy(
                 t.astype(np.float32).flatten())
-            # Scale translation based on triangulated point distances.
-            proj0 = cameras[0].proj_matrix().numpy()
-            proji = cameras[i].proj_matrix().numpy()
-            pts4d = cv2.triangulatePoints(proj0, proji, pts0.T, ptsi.T).T
-            pts3d = (pts4d[:, :3] / pts4d[:, 3, None]) \
-                .reshape(-1, args.nrows, args.ncols, 3)
-            dist_h = np.mean(np.linalg.norm(
-                pts3d[:, :-1, :] - pts3d[:, 1:, :], axis=-1))
-            dist_v = np.mean(np.linalg.norm(
-                pts3d[:, :, :-1] - pts3d[:, :, 1:], axis=-1))
-            scale = (2 * args.csize) / (dist_h + dist_v)
-            cameras[i].translation *= scale
     # Write out the calibration parameters.
     for file, cam in zip(args.cams, cameras):
         with open(file, "w") as f:
