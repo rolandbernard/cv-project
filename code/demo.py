@@ -280,7 +280,8 @@ if __name__ == "__main__":
     if is_offline:
         source = OfflineVideoSource(urls)
     else:
-        source = OnlineVideoSource(urls)
+        source = OnlineVideoSource(
+            [int(s) if s.isdigit() else s for s in urls])
     source.start()
     # Wait some time to make sure all cameras are connected and get frames.
     print("Waiting for frames...")
@@ -369,8 +370,12 @@ if __name__ == "__main__":
         tracker.predict(dt)
         tracker.update(cameras, frames)
         player.update(tracker.get_prediction())
-        cv2.imshow("Streams", np.concat(
-            [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames]))
+        vis_frame = np.concat(
+            [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames])
+        if vis_frame.shape[0] > 1000:
+            width = round(vis_frame.shape[1] * 1000 / vis_frame.shape[0])
+            vis_frame = cv2.resize(vis_frame, (width, 1000))
+        cv2.imshow("Streams", vis_frame)
         last_ts = ts
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
