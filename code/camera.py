@@ -152,6 +152,12 @@ class Camera:
         """ Compute the camera center with respect to the world. """
         return -self.rotation.mT @ self.translation
 
+    def proj_matrix(self) -> torch.Tensor:
+        """ Compute the camera projection matrix. """
+        return self.intrinsic @ torch.hstack([
+            self.rotation, self.translation.unsqueeze(-1)
+        ])
+
     def camera_to_world(self, points: torch.Tensor) -> torch.Tensor:
         """ Convert from camera for world coordinates. """
         return (self.rotation.mT @ (points.view(-1, 3) - self.translation)

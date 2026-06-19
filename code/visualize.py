@@ -120,7 +120,7 @@ class BaseSkeletonPlayer:
         """ Augment keypoints if necessary. """
         kpts = np.array(track["kpts"])
         if len(kpts) == 17:
-            return np.concatenate([
+            return np.concat([
                 kpts,
                 # Add the two COCO19 keypoints that have been discarded.
                 kpts[5:7].mean(axis=0, keepdims=True),

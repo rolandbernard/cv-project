@@ -328,14 +328,16 @@ if __name__ == "__main__":
             cameras[i].translation = torch.from_numpy(
                 -R.T @ t.flatten()).float()
         elif args.moge:
-            # Still run MoGe for clouds if requested even if extrinsics are provided
+            # Still run MoGe for clouds if requested even if extrinsics are provided.
             clouds[i] = cloudi
+    # Scale distance if ground truth is provided.
     if args.distance is not None and len(cameras) >= 2:
         dist = torch.linalg.vector_norm(
             cameras[0].center() - cameras[1].center()).item()
         scale = args.distance / dist
         for cam in cameras:
             cam.scale(scale)
+    # Setup the player and tracker.
     player = LiveSkeletonPlayer(cameras)
     if not args.no_cloud:
         for cam, cloud in zip(cameras, clouds):
@@ -353,6 +355,7 @@ if __name__ == "__main__":
     physics.to(util.DEVICE)
     tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
     tracker = tracker_cls(detector, physics)
+    # Run the tracking loop and update the visualization.
     last_ts = ts
     while True:
         ts, frames, _ = source.next_frames()
@@ -366,7 +369,7 @@ if __name__ == "__main__":
         tracker.predict(dt)
         tracker.update(cameras, frames)
         player.update(tracker.get_prediction())
-        cv2.imshow("Streams", np.concatenate(
+        cv2.imshow("Streams", np.concat(
             [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames]))
         last_ts = ts
         if cv2.waitKey(1) & 0xFF == ord("q"):
