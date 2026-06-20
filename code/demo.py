@@ -26,13 +26,19 @@ try:
 except ImportError:
     MOGE_AVAILABLE = False
 
+try:
+    from kornia.feature import LoFTR
+    LOFTR_AVAILABLE = True
+except ImportError:
+    LOFTR_AVAILABLE = False
+
 
 def rootsift(des: np.ndarray) -> np.ndarray:
     des /= (des.sum(axis=1, keepdims=True) + 1e-7)
     return np.sqrt(des)
 
 
-def match_image_features(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+def match_image_features_sift(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """ Create a set of point correspondences between two images. """
     # Extract features from the images
     sift = cv2.SIFT_create(  # type: ignore
@@ -48,138 +54,58 @@ def match_image_features(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.nda
     # Perform matching using features
     flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=100))
     ms = flann.knnMatch(des1, des2, k=2)  # type: ignore
-    gms = sorted(ms, key=lambda pt: pt[0].distance / pt[1].distance)[:200]
+    gms = sorted(ms, key=lambda pt: pt[0].distance / pt[1].distance)[:50]
     pts1 = np.array([kp1[m.queryIdx].pt for m, _ in gms])
     pts2 = np.array([kp2[m.trainIdx].pt for m, _ in gms])
     return pts1, pts2
 
 
-def estimate_camera_params(
-    img1: torch.Tensor, img2: torch.Tensor, K1: None | torch.Tensor = None, K2: None | torch.Tensor = None
-):
-    """ Estimate intrinsic and extrinsic camera parameters from two images. """
-    pts1, pts2 = match_image_features(img1, img2)
-    # Filter out outliers using fundamental matrix
-    F, mask = cv2.findFundamentalMat(
-        pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.9999, 50000)
-    if mask is None:
-        print("Fundamental matrix estimation failed.")
-        exit(1)
-    inliers1, inliers2 = pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
-    if K1 is None or K2 is None:
-        # Optimize focal lengths and center points
-        def epipolar_loss(params):
-            f1_c, cx1_c, cy1_c, f2_c, cx2_c, cy2_c = params
-            K1_c = np.array([[f1_c, 0, cx1_c], [0, f1_c, cy1_c], [0, 0, 1]])
-            K2_c = np.array([[f2_c, 0, cx2_c], [0, f2_c, cy2_c], [0, 0, 1]])
-            p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1_c, None)
-            p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2_c, None)
-            E_c, _ = cv2.findEssentialMat(
-                p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
-            if E_c is None or E_c.shape != (3, 3):
-                return 1e10
-            F_px = np.linalg.inv(K2_c).T @ E_c @ np.linalg.inv(K1_c)
-            pts1_h = np.column_stack([inliers1, np.ones(len(inliers1))])
-            pts2_h = np.column_stack([inliers2, np.ones(len(inliers2))])
-            l2 = (F_px @ pts1_h.T).T
-            l1 = (F_px.T @ pts2_h.T).T
-            alg_err = np.sum(pts2_h * l2, axis=1)
-            dist_err = (alg_err**2) / (l2[:, 0]**2 + l2[:, 1]**2 + 1e-8) + \
-                       (alg_err**2) / (l1[:, 0]**2 + l1[:, 1]**2 + 1e-8)
-            return np.mean(dist_err)
-
-        f1 = 1.25 * max(h1, w1)
-        f2 = 1.25 * max(h2, w2)
-        print("Optimizing intrinsics...")
-        res = opt.minimize(
-            epipolar_loss,
-            x0=[f1, cx1, cy1, f2, cx2, cy2],
-            bounds=[
-                (0.5 * w1, 3 * w1), (w1 * 0.4, w1 * 0.6), (h1 * 0.4, h1 * 0.6),
-                (0.5 * w2, 3 * w2), (w2 * 0.4, w2 * 0.6), (h2 * 0.4, h2 * 0.6)
-            ],
-            method="Nelder-Mead"
-        )
-        f1, cx1, cy1, f2, cx2, cy2 = res.x
-        K1 = np.array([[f1, 0, cx1], [0, f1, cy1],
-                      [0, 0, 1]], dtype=np.float32)
-        K2 = np.array([[f2, 0, cx2], [0, f2, cy2],
-                      [0, 0, 1]], dtype=np.float32)
-
-    p1_n = cv2.undistortPoints(np.expand_dims(inliers1, 1), K1, None)
-    p2_n = cv2.undistortPoints(np.expand_dims(inliers2, 1), K2, None)
-    E, final_mask = cv2.findEssentialMat(
-        p1_n, p2_n, np.eye(3), method=cv2.FM_8POINT)
-    _, R, t, _ = cv2.recoverPose(E, p1_n, p2_n, np.eye(3), mask=final_mask)
-
-    # Perform Bundle Adjustment to optimize further
-    def get_ba_errors(params, pts1, pts2):
-        f1_ba, cx1_ba, cy1_ba, f2_ba, cx2_ba, cy2_ba = params[0:6]
-        rvec, curr_t = params[6:9], params[9:12]
-        K1_ba = np.array([[f1_ba, 0, cx1_ba], [0, f1_ba, cy1_ba], [0, 0, 1]])
-        K2_ba = np.array([[f2_ba, 0, cx2_ba], [0, f2_ba, cy2_ba], [0, 0, 1]])
-        curr_R, _ = cv2.Rodrigues(rvec)
-        P1 = K1_ba @ np.hstack((np.eye(3), np.zeros((3, 1))))
-        P2 = K2_ba @ np.hstack((curr_R, curr_t.reshape(3, 1)))
-        pts4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
-        pts3d = (pts4d[:3] / (pts4d[3] + 1e-7)).T
-        imgpts1, _ = cv2.projectPoints(
-            pts3d, np.zeros(3), np.zeros(3), K1_ba, None)
-        imgpts2, _ = cv2.projectPoints(pts3d, rvec, curr_t, K2_ba, None)
-        err1 = (pts1 - imgpts1.reshape(-1, 2)).flatten()
-        err2 = (pts2 - imgpts2.reshape(-1, 2)).flatten()
-        return np.concatenate([err1, err2])
-
-    print("Final Bundle Adjustment...")
-    rvec_init, _ = cv2.Rodrigues(R)
-    res_ba = opt.least_squares(
-        get_ba_errors,
-        np.concatenate([[
-            f1, cx1, cy1, f2, cx2, cy2], rvec_init.flatten(), t.flatten()]),
-        args=(inliers1, inliers2), ftol=1e-4
-    )
-    f1, cx1, cy1, f2, cx2, cy2 = res_ba.x[0:6]
-    R, _ = cv2.Rodrigues(res_ba.x[6:9])
-    t = res_ba.x[9:12]
-    t = (t / (np.linalg.norm(t) + 1e-7))
-    K1 = np.array([[f1, 0, cx1], [0, f1, cy1], [0, 0, 1]], dtype=np.float32)
-    K2 = np.array([[f2, 0, cx2], [0, f2, cy2], [0, 0, 1]], dtype=np.float32)
-    return K1, K2, R, t
+def match_image_features_loftr(model, img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    """ Create a set of point correspondences between two images using LoFTR. """
+    img1_g = torch.from_numpy(cv2.cvtColor(img1.numpy(), cv2.COLOR_RGB2GRAY))
+    img2_g = torch.from_numpy(cv2.cvtColor(img2.numpy(), cv2.COLOR_RGB2GRAY))
+    with torch.inference_mode():
+        correspondences = model({
+            "image0": img1_g.permute(2, 0, 1).to(torch.float32) / 255.0,
+            "image1": img2_g.permute(2, 0, 1).to(torch.float32) / 255.0
+        })
+    pts1 = correspondences["keypoints0"].cpu().numpy()
+    pts2 = correspondences["keypoints1"].cpu().numpy()
+    return pts1, pts2
 
 
-def points_from_depth(depth: torch.Tensor, K: torch.Tensor, scale: float | torch.Tensor) -> torch.Tensor:
+def points_from_depth(cam: Camera, depth: torch.Tensor, scale: float | torch.Tensor) -> torch.Tensor:
     """ Unproject points using depth values and a scale. """
     height, width = depth.shape
     v, u = torch.meshgrid(
         torch.arange(height), torch.arange(width), indexing="ij")
-    pts = torch.stack([u, v, torch.ones_like(depth)], dim=-1) * depth * scale
-    return torch.linalg.solve(K, pts.unsqueeze(-1)).squeeze(-1)
+    uv = cam.undistort_points(torch.stack([u, v], dim=-1))
+    depth = depth.unsqueeze(-1)
+    return torch.concat([uv * depth, depth], dim=-1) * scale
 
 
-def evaluate_moge(model, img: torch.Tensor, K: None | torch.Tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """ Evaluate the MoGe-2 model on the given image. """
     height, width = img.shape[:2]
     p_img = (img.to(torch.float32) / 255.0).permute(2, 0, 1).to(util.DEVICE)
-    fov_x = torch.rad2deg(2 * torch.atan(width / (2 * K[0, 0]))) \
-        if K is not None else None
+    fov_x = torch.rad2deg(2 * torch.atan(width / (2 * cam.intrinsic[0, 0]))) \
+        if cam.has_intrinsics() else None
     with torch.inference_mode():
         out = model.infer(p_img, fov_x=fov_x)
     depth, msk = out["depth"].cpu(), out["mask"].cpu()
-    if K is None:
+    if not cam.has_intrinsics():
         K: torch.Tensor = out["intrinsics"].cpu()
         K[0, :] *= width
         K[1, :] *= height
-    # Compute point locations (missing the application of the intrinsics).
-    v, u = torch.meshgrid(
-        torch.arange(height), torch.arange(width), indexing="ij")
-    pts = torch.stack([u, v, torch.ones_like(depth)], dim=-1) * depth
-    return pts, msk, K
+        cam.intrinsic = K
+    return depth, msk
 
 
-def estimate_camera_params_moge(
-    img1: torch.Tensor, img2: torch.Tensor, pts1: torch.Tensor, pts2: torch.Tensor,
-    msk1: torch.Tensor, msk2: torch.Tensor, K1: torch.Tensor, K2: torch.Tensor
-):
+def estimate_camera_params_sift(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    raise NotImplemented
+
+
+def estimate_camera_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple[torch.Tensor, torch.Tensor]]:
     """ Estimate camera parameters using point cloud augmented images. """
     # Find matching features in the two images
     print("Computing initial camera parameters...")
@@ -268,12 +194,16 @@ if __name__ == "__main__":
                         help="Resize frames to (width, height)")
     parser.add_argument("--moge", action="store_true",
                         help="Use MoGe-2 for camera estimation")
+    parser.add_argument("--loftr", action="store_true",
+                        help="Use LoFTR for camera estimation")
     parser.add_argument("--no-constraint", action="store_true",
                         help="Do not use rigid body constraints")
     parser.add_argument("--cross-first", action="store_true",
                         help="Match using cross-view association first")
     parser.add_argument("--no-cloud", action="store_true",
                         help="Do not add point clouds to the visualization")
+    parser.add_argument("--intrinsics-only", action="store_true",
+                        help="Only load intrinsics from files")
     parser.add_argument("--cams-only", action="store_true",
                         help="Only show camera positions")
     args = parser.parse_args()
@@ -281,6 +211,9 @@ if __name__ == "__main__":
     if args.cams is not None:
         for cam, file in zip(cameras, args.cams):
             cam.load_file(file)
+            if args.intrinsics_only:
+                cam.rotation = torch.eye(3)
+                cam.translation = torch.zeros(3)
     clouds = [None for _ in range(len(cameras))]
     if not args.cams_only:
         if all(os.path.isfile(u) for u in args.urls):
@@ -354,8 +287,8 @@ if __name__ == "__main__":
         source.to(util.DEVICE)
         detector = PoseDetector()
         detector.to(util.DEVICE)
-        physics = build_physics(1.0) \
-            if args.no_constraint else build_constrained_physics(1.0)
+        physics = build_physics(1.0)
+        if args.no_constraint else build_constrained_physics(1.0)
         physics.to(util.DEVICE)
         tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
         tracker = tracker_cls(detector, physics)

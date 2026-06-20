@@ -120,6 +120,11 @@ class Camera:
         else:
             raise NotImplementedError("unable to load calibration file format")
 
+    def has_intrinsics(self) -> bool:
+        """ Check whether this has non-default intrinsic parameters. """
+        return not torch.allclose(self.intrinsic, torch.eye(3)) \
+            or not torch.allclose(self.distortion, torch.zeros(5))
+
     def has_extrinsics(self) -> bool:
         """ Check whether this has non-default extrinsic parameters. """
         return not torch.allclose(self.rotation, torch.eye(3)) \
