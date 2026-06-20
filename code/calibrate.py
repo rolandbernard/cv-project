@@ -10,7 +10,7 @@ import cv2
 import torch
 import numpy as np
 import networkx as nx
-from scipy.optimize import least_squares
+import scipy.optimize
 
 from camera import Camera
 from source import OfflineVideoSource, OnlineVideoSource
@@ -103,8 +103,13 @@ def bundle_adjustment(
                 break
     init_params = np.concat(
         camera_intr + camera_extr + board_params + [objp.flatten()])
+    f_idx = [np.array([
+        f for f, pts in enumerate(all_pts) if pts[i] is not None
+    ]) for i in range(len(cameras))]
+    pts2d_t = [np.concat([
+        all_pts[f][i].reshape(objp.shape[0], 2) for f in f_idx[i]
+    ]) for i in range(len(cameras))]
 
-    # Perform bundle adjustment to minimize residual error.
     def residual_fn(params):
         if keep_intrinsics:
             cam_extr_idx = 0
@@ -127,21 +132,19 @@ def bundle_adjustment(
         board_p = params[cam_end_idx:-objp.size].reshape(-1, 6)
         obj_p = params[-objp.size:].reshape(objp.shape)
         obj_p[0], obj_p[-1] = objp[0], objp[-1]  # Fix two points for scale.
+        R_b = np.stack([cv2.Rodrigues(r)[0] for r in board_p[:, :3]])
+        pts3d = (obj_p @ R_b.mT) + board_p[:, None, 3:]
         residuals = []
-        for k, pts in enumerate(all_pts):
-            rvec_b, tvec_b = board_p[k, :3], board_p[k, 3:]
-            R_b, _ = cv2.Rodrigues(rvec_b)
-            pts3d = (obj_p @ R_b.T) + tvec_b
-            for i in range(len(cameras)):
-                if pts[i] is None:
-                    continue
-                rvec_c, tvec_c = cam_extr[i, :3], cam_extr[i, 3:]
-                pts2d, _ = cv2.projectPoints(
-                    pts3d, rvec_c, tvec_c, cam_K[i], cam_dist[i])
-                residuals.append((pts2d - pts[i]).flatten())
+        for i in range(len(cameras)):
+            if len(f_idx[i]) == 0:
+                continue
+            cam3d = pts3d[f_idx[i]].reshape(-1, 3)
+            pts2d_p, _ = cv2.projectPoints(
+                cam3d, cam_extr[i, :3], cam_extr[i, 3:], cam_K[i], cam_dist[i])
+            residuals.append((pts2d_p.reshape(-1, 2) - pts2d_t[i]).flatten())
         return np.concat(residuals)
 
-    res = least_squares(residual_fn, init_params, method='lm')
+    res = scipy.optimize.least_squares(residual_fn, init_params)
     rms = np.sqrt(np.mean(residual_fn(res.x)**2))
     print(f"Final RMS reprojection error: {rms:0.3f}.")
     if keep_intrinsics:
@@ -176,7 +179,7 @@ if __name__ == "__main__":
         description="Camera calibration program.")
     parser.add_argument("urls", nargs="+",
                         help="URLs or paths to video sources")
-    parser.add_argument("--cams", nargs="+", required=True,
+    parser.add_argument("--cams", nargs="+",
                         help="Calibration files for cameras")
     parser.add_argument("--nrows", default=5, help="Rows of calibration grid")
     parser.add_argument("--ncols", default=7,
@@ -243,9 +246,10 @@ if __name__ == "__main__":
             for frame in frames:
                 bgr_img = cv2.cvtColor(frame.cpu().numpy(), cv2.COLOR_RGB2BGR)
                 gray_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+                flags = cv2.CALIB_CB_ACCURACY + cv2.CALIB_CB_EXHAUSTIVE \
+                    if record_next else 0
                 ret, corners = cv2.findChessboardCornersSB(
-                    gray_img, (args.nrows, args.ncols), None,
-                    flags=cv2.CALIB_CB_ACCURACY + cv2.CALIB_CB_EXHAUSTIVE)
+                    gray_img, (args.nrows, args.ncols), None, flags=flags)
                 if ret:
                     img_pts.append(corners)
                     cv2.drawChessboardCorners(
@@ -291,14 +295,14 @@ if __name__ == "__main__":
     cameras = [Camera() for _ in args.urls]
     height, width, _ = fst_frames[0].shape
     if args.keep_intrinsics:
-        for file, cam in zip(args.cams, cameras):
+        for file, cam in zip(args.cams or [], cameras):
             cam.load_file(file)
         multi_camera_calibrate(cameras, all_pts, objp, (width, height), True)
     else:
         multi_camera_calibrate(cameras, all_pts, objp, (width, height))
     bundle_adjustment(cameras, all_pts, objp, args.keep_intrinsics)
     # Write out the calibration parameters.
-    for file, cam in zip(args.cams, cameras):
+    for file, cam in zip(args.cams or [], cameras):
         with open(file, "w") as f:
             json.dump({
                 "K": cam["K"], "distCoef": cam["distCoef"],
