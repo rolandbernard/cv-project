@@ -274,70 +274,72 @@ if __name__ == "__main__":
                         help="Match using cross-view association first")
     parser.add_argument("--no-cloud", action="store_true",
                         help="Do not add point clouds to the visualization")
+    parser.add_argument("--cams-only", action="store_true",
+                        help="Only show camera positions")
     args = parser.parse_args()
-    urls = args.urls
-    is_offline = all(os.path.isfile(u) for u in urls)
-    if is_offline:
-        source = OfflineVideoSource(urls)
-    else:
-        source = OnlineVideoSource(
-            [int(s) if s.isdigit() else s for s in urls])
-    source.start()
-    # Wait some time to make sure all cameras are connected and get frames.
-    print("Waiting for frames...")
-    time.sleep(1)
-    ts, frames, _ = source.next_frames()
-    if ts is None or frames is None:
-        print("Failed to get initial frames.")
-        exit(1)
-    cameras = [Camera() for _ in range(len(urls))]
+    cameras = [Camera() for _ in range(len(args.urls))]
     if args.cams is not None:
         for cam, file in zip(cameras, args.cams):
             cam.load_file(file)
     clouds = [None for _ in range(len(cameras))]
-    moge_model = None
-    if args.moge:
-        if not MOGE_AVAILABLE:
-            print("MoGe-2 not found.")
+    if not args.cams_only:
+        if all(os.path.isfile(u) for u in args.urls):
+            source = OfflineVideoSource(args.urls)
+        else:
+            source = OnlineVideoSource(
+                [int(s) if s.isdigit() else s for s in args.urls])
+        source.start()
+        # Wait some time to make sure all cameras are connected and get frames.
+        print("Waiting for frames...")
+        time.sleep(1)
+        ts, frames, _ = source.next_frames()
+        if ts is None or frames is None:
+            print("Failed to get initial frames.")
             exit(1)
-        print("Loading MoGe-2...")
-        moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
-        moge_model.to(util.DEVICE)
-        moge_model.eval()
-    # Estimate parameters for all cameras with respect to the first camera.
-    for i in range(1, len(cameras)):
-        if not cameras[i].has_extrinsics():
-            print(f"Estimating parameters for camera {i}...")
-            K0_init = cameras[0].intrinsic.cpu().numpy() if (
-                args.cams and len(args.cams) > 0) else None
-            Ki_init = cameras[i].intrinsic.cpu().numpy() if (
-                args.cams and len(args.cams) > i) else None
-            if args.moge:
-                K0, Ki, R, t, cloud0, cloudi = estimate_camera_params_moge(
-                    imgs[0], imgs[i], moge_model, K1=K0_init, K2=Ki_init)
-                clouds[0] = cloud0
-                clouds[i] = cloudi
-            else:
-                K0, Ki, R, t = estimate_camera_params(
-                    imgs[0], imgs[i], K1=K0_init, K2=Ki_init)
+        moge_model = None
+        if args.moge:
+            if not MOGE_AVAILABLE:
+                print("MoGe-2 not found.")
+                exit(1)
+            print("Loading MoGe-2...")
+            moge_model = MoGeModel.from_pretrained(
+                "Ruicheng/moge-2-vitl-normal")
+            moge_model.to(util.DEVICE)
+            moge_model.eval()
+        # Estimate parameters for all cameras with respect to the first camera.
+        for i in range(1, len(cameras)):
+            if not cameras[i].has_extrinsics():
+                print(f"Estimating parameters for camera {i}...")
+                K0_init = cameras[0].intrinsic.cpu().numpy() if (
+                    args.cams and len(args.cams) > 0) else None
+                Ki_init = cameras[i].intrinsic.cpu().numpy() if (
+                    args.cams and len(args.cams) > i) else None
+                if args.moge:
+                    K0, Ki, R, t, cloud0, cloudi = estimate_camera_params_moge(
+                        imgs[0], imgs[i], moge_model, K1=K0_init, K2=Ki_init)
+                    clouds[0] = cloud0
+                    clouds[i] = cloudi
+                else:
+                    K0, Ki, R, t = estimate_camera_params(
+                        imgs[0], imgs[i], K1=K0_init, K2=Ki_init)
 
-            print(f"Camera 0 -> {i} parameters:")
-            print(f"K0:\n{K0}\nKi:\n{Ki}\nR:\n{R}\nt:\n{t}")
-            cameras[0].intrinsic = torch.from_numpy(K0).float()
-            cameras[i].intrinsic = torch.from_numpy(Ki).float()
-            cameras[i].rotation = torch.from_numpy(R.T).float()
-            cameras[i].translation = torch.from_numpy(
-                -R.T @ t.flatten()).float()
-        elif args.moge:
-            # Still run MoGe for clouds if requested even if extrinsics are provided.
-            clouds[i] = cloudi
-    # Scale distance if ground truth is provided.
-    if args.distance is not None and len(cameras) >= 2:
-        dist = torch.linalg.vector_norm(
-            cameras[0].center() - cameras[1].center()).item()
-        scale = args.distance / dist
-        for cam in cameras:
-            cam.scale(scale)
+                print(f"Camera 0 -> {i} parameters:")
+                print(f"K0:\n{K0}\nKi:\n{Ki}\nR:\n{R}\nt:\n{t}")
+                cameras[0].intrinsic = torch.from_numpy(K0).float()
+                cameras[i].intrinsic = torch.from_numpy(Ki).float()
+                cameras[i].rotation = torch.from_numpy(R.T).float()
+                cameras[i].translation = torch.from_numpy(
+                    -R.T @ t.flatten()).float()
+            elif args.moge:
+                # Still run MoGe for clouds if requested even if extrinsics are provided.
+                clouds[i] = cloudi
+        # Scale distance if ground truth is provided.
+        if args.distance is not None and len(cameras) >= 2:
+            dist = torch.linalg.vector_norm(
+                cameras[0].center() - cameras[1].center()).item()
+            scale = args.distance / dist
+            for cam in cameras:
+                cam.scale(scale)
     # Setup the player and tracker.
     player = LiveSkeletonPlayer(cameras)
     if not args.no_cloud:
@@ -346,36 +348,41 @@ if __name__ == "__main__":
                 pts, clrs = cloud
                 pts = cam.camera_to_world(torch.from_numpy(pts)).numpy()
                 player.add_point_cloud(pts, clrs)
-    source.cameras = cameras
-    source.resize = tuple(args.resize) if args.resize is not None else None
-    source.to(util.DEVICE)
-    detector = PoseDetector()
-    detector.to(util.DEVICE)
-    physics = build_physics(1.0) \
-        if args.no_constraint else build_constrained_physics(1.0)
-    physics.to(util.DEVICE)
-    tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
-    tracker = tracker_cls(detector, physics)
-    # Run the tracking loop and update the visualization.
-    last_ts = ts
-    while True:
-        ts, frames, _ = source.next_frames()
-        if ts is None or frames is None:
-            break
-        dt = ts - last_ts
-        if dt <= 0:
-            # We don"t have any new frames available.
-            time.sleep(0.01)
-            continue
-        tracker.predict(dt)
-        tracker.update(cameras, frames)
-        player.update(tracker.get_prediction())
-        vis_frame = np.concat(
-            [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames])
-        if vis_frame.shape[0] > 1000:
-            width = round(vis_frame.shape[1] * 1000 / vis_frame.shape[0])
-            vis_frame = cv2.resize(vis_frame, (width, 1000))
-        cv2.imshow("Streams", vis_frame)
+    if not args.cams_only:
+        source.cameras = cameras
+        source.resize = tuple(args.resize) if args.resize is not None else None
+        source.to(util.DEVICE)
+        detector = PoseDetector()
+        detector.to(util.DEVICE)
+        physics = build_physics(1.0) \
+            if args.no_constraint else build_constrained_physics(1.0)
+        physics.to(util.DEVICE)
+        tracker_cls = CrossViewFirstTracker if args.cross_first else Tracker
+        tracker = tracker_cls(detector, physics)
+        # Run the tracking loop and update the visualization.
         last_ts = ts
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+        while True:
+            ts, frames, _ = source.next_frames()
+            if ts is None or frames is None:
+                break
+            dt = ts - last_ts
+            if dt <= 0:
+                # We don"t have any new frames available.
+                time.sleep(0.01)
+                continue
+            tracker.predict(dt)
+            tracker.update(cameras, frames)
+            player.update(tracker.get_prediction())
+            vis_frame = np.concat(
+                [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR) for f in frames])
+            if vis_frame.shape[0] > 1000:
+                width = round(vis_frame.shape[1] * 1000 / vis_frame.shape[0])
+                vis_frame = cv2.resize(vis_frame, (width, 1000))
+            cv2.imshow("Streams", vis_frame)
+            last_ts = ts
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+    else:
+        while True:
+            player.update([])
+            time.sleep(0.01)

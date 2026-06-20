@@ -29,10 +29,9 @@ def multi_camera_calibrate(
                 [objp]*len(imgpts), imgpts,
                 img_size, None, None  # type: ignore
             )
-            cam.load_dict({
-                "K": cameraMatrix.astype(np.float32),
-                "distCoef": distCoeffs.astype(np.float32).flatten()
-            })
+            cam.intrinsic = torch.from_numpy(cameraMatrix.astype(np.float32))
+            cam.distortion = torch.from_numpy(
+                distCoeffs.astype(np.float32).flatten())
     # If there is more than one camera, also determine camera extrinsics.
     if len(cameras) >= 2:
         # Generate order in which we add cameras. Try to reduce cumulative error
@@ -86,8 +85,10 @@ def bundle_adjustment(
         tvec = cam.translation.numpy()
         camera_extr.append(np.concat([rvec.flatten(), tvec]))
     board_params = []
+    if keep_intrinsics:
+        all_pts = [pts for pts in all_pts
+                   if sum(1 for p in pts if p is not None) >= 2]
     for pts in all_pts:
-        rs, ts = [], []
         for i, cam in enumerate(cameras):
             if pts[i] is not None:
                 Ki = cam.intrinsic.numpy()
@@ -98,10 +99,10 @@ def bundle_adjustment(
                 ti = cam.translation.numpy()
                 R_w, t_w = Ri.T @ R_l, Ri.T @ (tvec.flatten() - ti)
                 rvec_w, _ = cv2.Rodrigues(R_w)
-                rs.append(rvec_w.flatten())
-                ts.append(t_w)
-        board_params.append(np.concat((rs[0], ts[0])))
-    init_params = np.concat(camera_intr + camera_extr + board_params)
+                board_params.append(np.concat((rvec_w.flatten(), t_w)))
+                break
+    init_params = np.concat(
+        camera_intr + camera_extr + board_params + [objp.flatten()])
 
     # Perform bundle adjustment to minimize residual error.
     def residual_fn(params):
@@ -115,7 +116,7 @@ def bundle_adjustment(
         else:
             cam_extr_idx = len(cameras) * 9
             cam_intr = params[:cam_extr_idx].reshape(-1, 9)
-            cam_K = np.zeros((cam_intr.shape[0], 3, 3))
+            cam_K = np.zeros((len(cameras), 3, 3))
             cam_K[:, 0, 0], cam_K[:, 1, 1] = cam_intr[:, 0], cam_intr[:, 1]
             cam_K[:, 0, 2], cam_K[:, 1, 2] = cam_intr[:, 2], cam_intr[:, 3]
             cam_K[:, 2, 2] = 1
@@ -123,12 +124,14 @@ def bundle_adjustment(
         cam_end_idx = cam_extr_idx + (len(cameras) - 1) * 6
         cam_extr = np.zeros((len(cameras), 6))
         cam_extr[1:] = params[cam_extr_idx:cam_end_idx].reshape(-1, 6)
-        board_p = params[cam_end_idx:].reshape(-1, 6)
+        board_p = params[cam_end_idx:-objp.size].reshape(-1, 6)
+        obj_p = params[-objp.size:].reshape(objp.shape)
+        obj_p[0], obj_p[-1] = objp[0], objp[-1]  # Fix two points for scale.
         residuals = []
         for k, pts in enumerate(all_pts):
             rvec_b, tvec_b = board_p[k, :3], board_p[k, 3:]
             R_b, _ = cv2.Rodrigues(rvec_b)
-            pts3d = (objp @ R_b.T) + tvec_b
+            pts3d = (obj_p @ R_b.T) + tvec_b
             for i in range(len(cameras)):
                 if pts[i] is None:
                     continue
@@ -139,26 +142,28 @@ def bundle_adjustment(
         return np.concat(residuals)
 
     res = least_squares(residual_fn, init_params, method='lm')
-    print(f"Final RMS reprojection error: {np.mean(residual_fn(res.x)**2)}.")
+    rms = np.sqrt(np.mean(residual_fn(res.x)**2))
+    print(f"Final RMS reprojection error: {rms:0.3f}.")
     if keep_intrinsics:
         cam_extr_idx = 0
     else:
         cam_extr_idx = len(cameras) * 9
         opt_cam_intr = res.x[:cam_extr_idx].reshape(-1, 9)
-        for params, cam in zip(opt_cam_intr, cameras[1:]):
-        cam_K = np.zeros((opt_cam_intr.shape[0], 3, 3))
-        cam_K[:, 0, 0], cam_K[:, 1, 1] = opt_cam_intr[:, 0], opt_cam_intr[:, 1]
-        cam_K[:, 0, 2], cam_K[:, 1, 2] = opt_cam_intr[:, 2], opt_cam_intr[:, 3]
-        cam_K[:, 2, 2] = 1
-        cam_dist = opt_cam_intr[:, 4:]
+        for params, cam in zip(opt_cam_intr, cameras):
+            K = np.zeros((3, 3), dtype=np.float32)
+            K[0, 0], K[1, 1] = params[0], params[1]
+            K[0, 2], K[1, 2] = params[2], params[3]
+            K[2, 2] = 1
+            dist = params[4:]
+            cam.intrinsic = torch.from_numpy(K.astype(np.float32))
+            cam.distortion = torch.from_numpy(dist.astype(np.float32))
     cam_end_idx = cam_extr_idx + (len(cameras) - 1) * 6
     opt_cam_extr = res.x[cam_extr_idx:cam_end_idx].reshape(-1, 6)
     for params, cam in zip(opt_cam_extr, cameras[1:]):
         rvec, tvec = params[:3], params[3:]
         R_mat, _ = cv2.Rodrigues(rvec)
-        cameras[i].rotation = torch.from_numpy(R_mat.astype(np.float32))
-        cameras[i].translation = torch.from_numpy(
-            tvec.astype(np.float32).flatten())
+        cam.rotation = torch.from_numpy(R_mat.astype(np.float32))
+        cam.translation = torch.from_numpy(tvec.astype(np.float32).flatten())
     return cameras
 
 
@@ -187,7 +192,6 @@ if __name__ == "__main__":
     parser.add_argument("--no-flip", action="store_true",
                         help="Do not try to flip detections to align them")
     args = parser.parse_args()
-    urls = args.urls
     all_pts = []
     if args.load_imgs is not None:
         # Load existing frames from disk.
@@ -196,7 +200,7 @@ if __name__ == "__main__":
         for iter in iters:
             fst_frames = []
             img_pts = []
-            for i in range(len(urls)):
+            for i in range(len(args.urls)):
                 bgr_img = cv2.imread(f"{args.load_imgs}/{iter}_{i}.jpg")
                 assert bgr_img is not None
                 gray_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
@@ -211,12 +215,11 @@ if __name__ == "__main__":
             all_pts.append(img_pts)
     else:
         # Live record new frames.
-        is_offline = all(os.path.isfile(u) for u in urls)
-        if is_offline:
-            source = OfflineVideoSource(urls)
+        if all(os.path.isfile(u) for u in args.urls):
+            source = OfflineVideoSource(args.urls)
         else:
             source = OnlineVideoSource(
-                [int(s) if s.isdigit() else s for s in urls])
+                [int(s) if s.isdigit() else s for s in args.urls])
         source.start()
         # Wait some time to make sure all cameras are connected and get frames.
         print("Waiting for frames...")
@@ -270,6 +273,7 @@ if __name__ == "__main__":
                 record_next = True
             else:
                 record_next = False
+    all_pts = [pts for pts in all_pts if any(p is not None for p in pts)]
     objp = np.zeros((args.nrows * args.ncols, 3), np.float32)
     objp[:, :2] = np.mgrid[0:args.nrows, 0:args.ncols].T.reshape(-1, 2)
     objp *= args.csize
@@ -284,7 +288,7 @@ if __name__ == "__main__":
                         pts[i] = np.flipud(p)
                         dir = -dir
                     avg_dir += dir
-    cameras = [Camera() for _ in urls]
+    cameras = [Camera() for _ in args.urls]
     height, width, _ = fst_frames[0].shape
     if args.keep_intrinsics:
         for file, cam in zip(args.cams, cameras):
@@ -292,7 +296,7 @@ if __name__ == "__main__":
         multi_camera_calibrate(cameras, all_pts, objp, (width, height), True)
     else:
         multi_camera_calibrate(cameras, all_pts, objp, (width, height))
-    bundle_adjustment(cameras, all_pts, objp)
+    bundle_adjustment(cameras, all_pts, objp, args.keep_intrinsics)
     # Write out the calibration parameters.
     for file, cam in zip(args.cams, cameras):
         with open(file, "w") as f:

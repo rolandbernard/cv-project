@@ -64,7 +64,7 @@ class BaseSkeletonPlayer:
 
     def setup_cameras(self, cameras: list, scale: float = 0.05):
         """ Add camera frustums to the scene. """
-        for cam in cameras:
+        for i, cam in enumerate(cameras):
             rotation = np.array(cam["R"])
             translate = np.array(cam["t"]).flatten()
             camera_center = -rotation.T @ translate
