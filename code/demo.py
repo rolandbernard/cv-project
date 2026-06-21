@@ -14,12 +14,10 @@ from camera import Camera, triangulate
 from detect import PoseDetector
 from source import OfflineVideoSource, OnlineVideoSource
 from tracker import (
-    CrossViewFirstTracker,
-    Tracker,
-    build_constrained_physics,
-    build_physics,
+    CrossViewFirstTracker, Tracker,
+    build_constrained_physics, build_physics,
 )
-from visualize import LiveSkeletonPlayer
+from visualize import LiveSkeletonPlayer, show_cv2_images
 
 try:
     from moge.model.v2 import MoGeModel
@@ -76,11 +74,34 @@ def match_images_loftr(model, img1: torch.Tensor, img2: torch.Tensor) -> tuple[n
     return pts1, pts2
 
 
-def filter_matches(pts1: np.ndarray, pts2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def filter_matches(
+    pts1: np.ndarray, pts2: np.ndarray, cam1: None | Camera = None, cam2: None | Camera = None
+) -> tuple[np.ndarray, np.ndarray]:
     """ Filter out outliers in matched points between images. """
-    _, mask = cv2.findFundamentalMat(
-        pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.99, 50000)
+    if cam1 is not None and cam2 is not None:
+        _, mask = cv2.findEssentialMat(
+            pts1, pts2,
+            cam1.intrinsic.numpy(), cam1.distortion.numpy(),
+            cam2.intrinsic.numpy(), cam2.distortion.numpy(),
+            method=cv2.RANSAC, threshold=1.0, prob=0.99
+        )
+    else:
+        _, mask = cv2.findFundamentalMat(
+            pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.99, 5000)
     return pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
+
+
+def triangulate_matches(pts1: np.ndarray, pts2: np.ndarray, cam1: Camera, cam2: Camera) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """ Triangulate matches between cameras and filter out outliers. """
+    pts3d = triangulate(
+        [cam1, cam2], [torch.from_numpy(pts1), torch.from_numpy(pts2)]
+    )
+    rep1, rep2 = cam1.project(pts3d).numpy(), cam2.project(pts3d).numpy()
+    valid1 = np.linalg.norm(rep1 - pts1, axis=-1) < 1.0
+    valid2 = np.linalg.norm(rep2 - pts2, axis=-1) < 1.0
+    mask = valid1 & valid2
+    pts1, pts2 = pts1[mask].astype(np.int64), pts2[mask].astype(np.int64)
+    return pts1, pts2, pts3d.numpy()[mask]
 
 
 def points_from_depth(cam: Camera, depth: torch.Tensor, scale: float | torch.Tensor) -> torch.Tensor:
@@ -111,7 +132,7 @@ def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> torch.Tensor:
 
 
 def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[np.ndarray]:
-    """ Estimate camera parameters using point correspondences. """
+    """ Estimate camera extrinsics using point correspondences. """
     # Create matches between pixels in different images.
     matches: list[list[tuple]] = [[([], []) for _ in cams] for _ in cams]
     if use_loftr:
@@ -122,7 +143,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
                 pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
             else:
                 pts1, pts2 = match_images_sift(imgs[i], imgs[j])
-            pts1, pts2 = filter_matches(pts1, pts2)
+            pts1, pts2 = filter_matches(pts1, pts2, cams[i], cams[j])
             matches[i][j] = (pts1, pts2)
             matches[j][i] = (pts2, pts1)
     points3d = [np.zeros(img.shape, dtype=np.float32) for img in imgs]
@@ -131,17 +152,60 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
         for i, ms in enumerate(matches):
             for j, (pts1, pts2) in enumerate(ms):
                 if len(pts1) >= 1:
-                    pts3d = triangulate(
-                        [cams[i], cams[j]],
-                        [torch.from_numpy(pts1), torch.from_numpy(pts2)]
-                    ).numpy()
-                    pts1, pts2 = pts1.astype(np.int64), pts2.astype(np.int64)
+                    pts1, pts2, pts3d \
+                        = triangulate_matches(pts1, pts2, cams[i], cams[j])
                     points3d[i][pts1[:, 1], pts1[:, 0]] = pts3d
                     points3d[j][pts2[:, 1], pts2[:, 0]] = pts3d
-    else:
-        # Start building with two cameras with most matches.
+    elif len(cams) >= 2:
+        # Start building with two cameras with most matches to first camera.
+        mi = max(range(len(cams)), key=lambda i: len(matches[0][i][0]))
+        pts1, pts2 = matches[0][mi]
+        _, _, R, t, _ = cv2.recoverPose(
+            pts1, pts2,
+            cams[0].intrinsic.numpy(), cams[0].distortion.numpy(),
+            cams[mi].intrinsic.numpy(), cams[mi].distortion.numpy(),
+            method=cv2.RANSAC, threshold=1.0, prob=0.99
+        )
+        cams[mi].rotation = torch.from_numpy(R.astype(np.float32))
+        cams[mi].translation = torch.from_numpy(t.astype(np.float32).flatten())
+        pts1, pts2, pts3d = triangulate_matches(pts1, pts2, cams[0], cams[mi])
+        points3d[0][pts1[:, 1], pts1[:, 0]] = pts3d
+        points3d[mi][pts2[:, 1], pts2[:, 0]] = pts3d
         # Add all other cameras
-        raise NotImplementedError
+        added = {0, mi}
+        missing = {i for i in range(len(cams)) if i != 0 and i != mi}
+        while len(missing) > 0:
+            mi = max(
+                missing,
+                key=lambda i: sum(len(matches[i][j][0]) for j in added)
+            )
+            pts2d, pts3d = [], []
+            for j, (pts1, pts2) in enumerate(matches[mi]):
+                if len(pts1) >= 1:
+                    pts2 = pts2.astype(np.int64)
+                    pt3d = points3d[j][pts2[:, 1], pts2[:, 0]]
+                    mask = np.any(pt3d != 0, axis=1)
+                    pts2d.append(pts1[mask])
+                    pts3d.append(pt3d[mask])
+            pts2d, pts3d = np.concat(pts2d), np.concat(pts3d)
+            _, rvec, t, _ = cv2.solvePnPRansac(
+                pts3d, pts2d,
+                cams[mi].intrinsic.numpy(), cams[mi].distortion.numpy(),
+                reprojectionError=8.0, confidence=0.99, iterationsCount=5000,
+                flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            R, _ = cv2.Rodrigues(rvec)
+            cams[mi].rotation = torch.from_numpy(R.astype(np.float32))
+            cams[mi].translation \
+                = torch.from_numpy(t.astype(np.float32).flatten())
+            for j, (pts1, pts2) in enumerate(matches[mi]):
+                if len(pts1) >= 1:
+                    pts1, pts2, pts3d \
+                        = triangulate_matches(pts1, pts2, cams[mi], cams[j])
+                    points3d[mi][pts1[:, 1], pts1[:, 0]] = pts3d
+                    points3d[j][pts2[:, 1], pts2[:, 0]] = pts3d
+            added.add(mi)
+            missing.remove(mi)
     return points3d
 
 
@@ -152,8 +216,8 @@ def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_lof
             # Best guess for intrinsics.
             f = 1.2 * max(*img.shape)
             cam.intrinsic = torch.tensor([
-                [f, 0.0, img.shape[0] / 2.0],
-                [0.0, f, img.shape[1] / 2.0],
+                [f, 0.0, img.shape[1] / 2.0],
+                [0.0, f, img.shape[0] / 2.0],
                 [0.0, 0.0, 1.0]
             ])
     points3d = estimate_params(cams, imgs, use_loftr)
@@ -324,25 +388,12 @@ if __name__ == "__main__":
             tracker.update(cameras, frames)
             last_ts = ts
             player.update(tracker.get_prediction())
-            vis_frames = []
-            for cam, f in zip(cameras, frames):
-                bgr_frame = cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR)
-                for track in tracker.get_prediction():
-                    color = util.COLORS_TUPLE[track.id % len(util.COLORS)]
-                    kpts = cam.project(track.get_keypoints())
-                    for i, j in util.SKELETON:
-                        cv2.line(
-                            bgr_frame,
-                            (int(kpts[i, 0]), int(kpts[i, 1])),
-                            (int(kpts[j, 0]), int(kpts[j, 1])),
-                            (color[2], color[1], color[0])
-                        )
-                vis_frames.append(bgr_frame)
-            vis_frames = np.concat(vis_frames)
-            if vis_frames.shape[0] > 1000:
-                width = round(vis_frames.shape[1] * 1000 / vis_frames.shape[0])
-                vis_frames = cv2.resize(vis_frames, (width, 1000))
-            cv2.imshow("Streams", vis_frames)
+            show_cv2_images(
+                cameras,
+                [cv2.cvtColor(f.cpu().numpy(), cv2.COLOR_RGB2BGR)
+                 for f in frames],
+                tracker.get_prediction()
+            )
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
     else:

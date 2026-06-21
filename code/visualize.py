@@ -1,9 +1,9 @@
 
 import os
 import argparse
-
 from typing import Any
 
+import cv2
 import pyvista as pv
 import numpy as np
 
@@ -255,6 +255,33 @@ def load_from_files(main_file: str, gt_file: None | str = None) -> SkeletonPlaye
     if gt_file is not None:
         _, gt_frames, _, _, _ = util.load_tracks(gt_file)
     return SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
+
+
+def show_cv2_images(cams: list, imgs: list[np.ndarray], tracks: list):
+    """ Show images from the cameras in OpenCV image showing tracks. """
+    vis_frames = []
+    for cam, f in zip(cams, imgs):
+        vis_frame = f.copy()
+        for track in tracks:
+            color = util.COLORS_TUPLE[track["id"] % len(util.COLORS)]
+            kpts = np.array(track["kpts"])
+            rvec, _ = cv2.Rodrigues(np.array(cam["R"]))
+            t, K = np.array(cam["t"]), np.array(cam["K"])
+            dist = np.array(cam["distCoef"])
+            kpts, _ = cv2.projectPoints(kpts, rvec, t, K, dist)
+            for i, j in util.SKELETON:
+                cv2.line(
+                    vis_frame,
+                    (int(kpts[i, 0, 0]), int(kpts[i, 0, 1])),
+                    (int(kpts[j, 0, 0]), int(kpts[j, 0, 1])),
+                    (color[2], color[1], color[0])
+                )
+        vis_frames.append(vis_frame)
+    vis_frames = np.concat(vis_frames)
+    if vis_frames.shape[0] > 1000:
+        width = round(vis_frames.shape[1] * 1000 / vis_frames.shape[0])
+        vis_frames = cv2.resize(vis_frames, (width, 1000))
+    cv2.imshow("Streams", vis_frames)
 
 
 if __name__ == "__main__":

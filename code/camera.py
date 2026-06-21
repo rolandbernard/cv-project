@@ -125,6 +125,10 @@ class Camera:
         return not torch.allclose(self.intrinsic, torch.eye(3)) \
             or not torch.allclose(self.distortion, torch.zeros(5))
 
+    def has_distortion(self) -> bool:
+        """ Check whether this has non-default distortion parameters. """
+        return not torch.allclose(self.distortion, torch.zeros(5))
+
     def has_extrinsics(self) -> bool:
         """ Check whether this has non-default extrinsic parameters. """
         return not torch.allclose(self.rotation, torch.eye(3)) \
@@ -263,6 +267,13 @@ class Camera:
             scale, xy_off = self.distortion_params(xy_norm)
             xy_norm = (xy - xy_off) / scale
         return xy_norm.view(*Bs, M)
+
+    def undistort_points_ex(self, points: torch.Tensor, num_iters: int = 10) -> torch.Tensor:
+        """ Undistort a set of 2d points but reapply intrinsics. """
+        *Bs, M = points.shape
+        xy_norm = self.undistort_points(points, num_iters)
+        xy = self.intrinsic @ xy_norm.view(-1, 2, 1)
+        return xy.view(*Bs, M)
 
     def undistort_covars(self, covars: torch.Tensor) -> torch.Tensor:
         """
