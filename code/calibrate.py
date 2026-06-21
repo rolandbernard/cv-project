@@ -225,7 +225,6 @@ if __name__ == "__main__":
                 [int(s) if s.isdigit() else s for s in args.urls])
         source.start()
         # Wait some time to make sure all cameras are connected and get frames.
-        print("Waiting for frames...")
         time.sleep(1)
         ts, fst_frames, _ = source.next_frames()
         if ts is None or fst_frames is None:
