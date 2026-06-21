@@ -6,7 +6,8 @@ import argparse
 import cv2
 import torch
 import numpy as np
-import scipy.interpolate
+import scipy.sparse
+import scipy.sparse.linalg
 
 import util
 from camera import Camera, triangulate
@@ -164,6 +165,39 @@ def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_lof
     return list(zip(pts, clrs))
 
 
+def depth_refinement(dense: np.ndarray, mask: np.ndarray, sparse: np.ndarray) -> np.ndarray:
+    """ Refines a dense depth map using sparse anchors while respecting object edges. """
+    lam, alpha, iters = 10.0, 100.0, 3
+    height, width = dense.shape
+    pixels = height * width
+    idx = np.arange(pixels).reshape((height, width))
+    idx_left, idx_right = idx[:, :-1].flatten(), idx[:, 1:].flatten()
+    grad_x = (dense[:, :-1] - dense[:, 1:]).flatten()
+    wx = np.exp(-alpha * grad_x*grad_x / dense.var())
+    idx_top, idx_bot = idx[:-1, :].flatten(), idx[1:, :].flatten()
+    grad_y = (dense[:-1, :] - dense[1:, :]).flatten()
+    wy = np.exp(-alpha * grad_y*grad_y / dense.var())
+    row = np.concatenate([idx_left, idx_right, idx_top, idx_bot])
+    col = np.concatenate([idx_right, idx_left, idx_bot, idx_top])
+    data = np.concatenate([wx, wx, wy, wy])
+    adj = scipy.sparse.csr_matrix((data, (row, col)), shape=(pixels, pixels))
+    deg = scipy.sparse.diags(np.array(adj.sum(axis=1)).flatten())
+    target_scales = np.ones_like(dense)
+    target_scales[mask] = sparse[mask] / dense[mask]
+    mask_f = mask.flatten().astype(np.float32)
+    conf_weights = np.ones(pixels)
+    scale_field = np.ones(pixels)
+    for _ in range(iters):
+        dynamic_lam = mask_f * lam * conf_weights
+        A = deg - adj + scipy.sparse.diags(dynamic_lam)
+        b = dynamic_lam * target_scales.flatten()
+        scale_field, _ = scipy.sparse.linalg.cg(A, b, x0=scale_field)
+        residuals = np.abs(scale_field - target_scales.flatten()) * mask_f
+        sigma = np.median(residuals[mask_f > 0.5]) + 1e-5
+        conf_weights = 1.0 / (1.0 + (residuals / (2 * sigma))**2)
+    return dense * scale_field.reshape((height, width))
+
+
 def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
     """ Estimate camera parameters and generate point clouds. """
     moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
@@ -171,29 +205,21 @@ def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr
     moge_model.eval()
     depths = []
     for cam, img in zip(cams, imgs):
-        depths.append(evaluate_moge(moge_model, cam, img))
+        depths.append(evaluate_moge(moge_model, cam, img).numpy())
     points3d = estimate_params(cams, imgs, use_loftr)
     scales = []
     for cam, pts3d, depth in zip(cams, points3d, depths):
         mask = np.any(pts3d != 0, axis=2)
-        pts3d = cam.world_to_camera(torch.from_numpy(pts3d[mask])).numpy()
-        scale = np.median(depth.numpy()[mask] / pts3d[:, 2])
+        pts3d = cam.world_to_camera(torch.from_numpy(pts3d)).numpy()
+        scale = np.median(depth[mask] / pts3d[mask, 2])
         depth /= scale
         scales.append(scale)
-        rbf = scipy.interpolate.RBFInterpolator(
-            np.argwhere(mask) / np.array(depth.shape),
-            pts3d[:, 2] / depth.numpy()[mask],
-            kernel='thin_plate_spline', smoothing=0.5
-        )
-        yy, xx = np.mgrid[0:depth.shape[0], 0:depth.shape[1]]
-        coords = np.stack([yy.ravel(), xx.ravel()], axis=-1)
-        scale_field = rbf(coords / np.array(depth.shape)).reshape(depth.shape)
-        depth[:, :] *= scale_field
+        depth[:, :] = depth_refinement(depth, mask, pts3d[..., 2])
     pts_scale = np.median(scales)
     pts, clrs = [], []
     for cam, depth, img in zip(cams, depths, imgs):
         cam.scale(pts_scale)
-        pts3d = points_from_depth(cam, depth, pts_scale)
+        pts3d = points_from_depth(cam, torch.from_numpy(depth), pts_scale)
         pts.append(pts3d.numpy().reshape(-1, 3))
         clrs.append(img.reshape(-1, 3))
     return list(zip(pts, clrs))
