@@ -295,7 +295,7 @@ class Tracker:
         # Match each images detections to tracks.
         t_start = time.perf_counter()
         obs: list[tuple[list[Camera], list[torch.Tensor], list[torch.Tensor]]] \
-            = [([], [], []) for _ in range(len(self.tracks))]
+            = [([], [], []) for _ in self.tracks]
         nomatch = []
         for cam, (kpts, covs) in zip(cams, detections):
             tr_idx, det_idx = self.associate_pred_to_detection(cam, kpts, covs)

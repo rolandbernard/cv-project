@@ -340,7 +340,7 @@ def triangulate_undistorted(cams: list[Camera], points: list[torch.Tensor], cova
     """
     mats = []
     vec = []
-    for cam, pts, cov in zip(cams, points, covars or [None for _ in range(len(cams))]):
+    for cam, pts, cov in zip(cams, points, covars or [None for _ in cams]):
         r, t = cam.rotation, cam.translation
         A = r[0:2] - pts.unsqueeze(-1) * r[2]
         b = (pts * t[2] - t[0:2]).unsqueeze(-1)

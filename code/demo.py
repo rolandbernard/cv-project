@@ -5,11 +5,10 @@ import argparse
 
 import cv2
 import numpy as np
-import scipy.optimize as opt
 import torch
 
 import util
-from camera import Camera
+from camera import Camera, triangulate
 from detect import PoseDetector
 from source import OfflineVideoSource, OnlineVideoSource
 from tracker import (
@@ -39,7 +38,7 @@ def rootsift(des: np.ndarray) -> np.ndarray:
     return np.sqrt(des)
 
 
-def match_image_features_sift(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+def match_images_sift(img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """ Create a set of point correspondences between two images using SIFT. """
     # Extract features from the images
     sift = cv2.SIFT_create(  # type: ignore
@@ -56,23 +55,30 @@ def match_image_features_sift(img1: torch.Tensor, img2: torch.Tensor) -> tuple[n
     flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=100))
     ms = flann.knnMatch(des1, des2, k=2)  # type: ignore
     gms = sorted(ms, key=lambda pt: pt[0].distance / pt[1].distance)[:50]
-    pts1 = np.array([kp1[m.queryIdx].pt for m, _ in gms])
-    pts2 = np.array([kp2[m.trainIdx].pt for m, _ in gms])
+    pts1 = np.array([kp1[m.queryIdx].pt for m, _ in gms], dtype=np.float32)
+    pts2 = np.array([kp2[m.trainIdx].pt for m, _ in gms], dtype=np.float32)
     return pts1, pts2
 
 
-def match_image_features_loftr(model, img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+def match_images_loftr(model, img1: torch.Tensor, img2: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """ Create a set of point correspondences between two images using LoFTR. """
     img1_g = torch.from_numpy(cv2.cvtColor(img1.numpy(), cv2.COLOR_RGB2GRAY))
     img2_g = torch.from_numpy(cv2.cvtColor(img2.numpy(), cv2.COLOR_RGB2GRAY))
     with torch.inference_mode():
         correspondences = model({
-            "image0": img1_g.permute(2, 0, 1).to(torch.float32) / 255.0,
-            "image1": img2_g.permute(2, 0, 1).to(torch.float32) / 255.0
+            "image0": img1_g.unsqueeze(0).unsqueeze(0).float() / 255.0,
+            "image1": img2_g.unsqueeze(0).unsqueeze(0).float() / 255.0
         })
     pts1 = correspondences["keypoints0"].cpu().numpy()
     pts2 = correspondences["keypoints1"].cpu().numpy()
     return pts1, pts2
+
+
+def filter_matches(pts1: np.ndarray, pts2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """ Filter out outliers in matched points between images. """
+    _, mask = cv2.findFundamentalMat(
+        pts1, pts2, cv2.USAC_MAGSAC, 1.0, 0.99, 50000)
+    return pts1[mask.ravel() == 1], pts2[mask.ravel() == 1]
 
 
 def points_from_depth(cam: Camera, depth: torch.Tensor, scale: float | torch.Tensor) -> torch.Tensor:
@@ -102,12 +108,52 @@ def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> tuple[torch.Tensor, 
     return depth, msk
 
 
-def estimate_camera_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple[torch.Tensor, torch.Tensor]]:
+def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
     """ Estimate camera parameters using point correspondences. """
-    raise NotImplementedError
+    # Estimate fixed intrinsics if not known.
+    for cam, img in zip(cams, imgs):
+        if not cam.has_intrinsics():
+            # Best guess for intrinsics.
+            f = 1.2 * max(*img.shape)
+            cam.intrinsic = torch.tensor([
+                [f, 0.0, img.shape[0] / 2.0],
+                [0.0, f, img.shape[1] / 2.0],
+                [0.0, 0.0, 1.0]
+            ])
+    # Create matches between pixels in different images.
+    matches: list[list[tuple]] = [[([], []) for _ in cams] for _ in cams]
+    if use_loftr:
+        model = LoFTR("indoor_new")
+    for i in range(len(cams)):
+        for j in range(i):
+            if use_loftr:
+                pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
+            else:
+                pts1, pts2 = match_images_sift(imgs[i], imgs[j])
+            pts1, pts2 = filter_matches(pts1, pts2)
+            matches[i][j] = (pts1, pts2)
+            matches[j][i] = (pts2, pts1)
+    points3d = [np.zeros_like(img) for img in imgs]
+    if not any(cam.has_extrinsics() for cam in cams):
+        # Start building with two cameras with most matches.
+        # Add all other cameras
+        raise NotImplementedError
+    pts, clrs = [], []
+    for i, ms in enumerate(matches):
+        for j, (pts1, pts2) in enumerate(ms):
+            if len(pts1) >= 1:
+                pts3d = triangulate(
+                    [cams[i], cams[j]],
+                    [torch.from_numpy(pts1), torch.from_numpy(pts2)]
+                ).numpy()
+                pts.append(pts3d)
+                pts1, pts2 = pts1.astype(np.int64), pts2.astype(np.int64)
+                clrs.append((imgs[i][pts1[:, 1], pts1[:, 0]]
+                             + imgs[j][pts2[:, 1], pts2[:, 0]]) * 0.5)
+    return list(zip(pts, clrs))
 
 
-def estimate_camera_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple[torch.Tensor, torch.Tensor]]:
+def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
     """ Estimate camera parameters using point cloud augmented images. """
     moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
     moge_model.to(util.DEVICE)
@@ -142,15 +188,14 @@ if __name__ == "__main__":
     parser.add_argument("--cams-only", action="store_true",
                         help="Only show camera positions")
     args = parser.parse_args()
-    cameras = [Camera() for _ in range(len(args.urls))]
+    cameras = [Camera() for _ in args.urls]
     if args.cams is not None:
         for cam, file in zip(cameras, args.cams):
             cam.load_file(file)
             if args.intrinsics_only:
                 cam.rotation = torch.eye(3)
                 cam.translation = torch.zeros(3)
-    clouds: list[None | tuple[np.ndarray, np.ndarray]] \
-        = [None for _ in range(len(cameras))]
+    clouds: list[tuple] = []
     if not args.cams_only:
         if all(os.path.isfile(u) for u in args.urls):
             source = OfflineVideoSource(args.urls)
@@ -159,7 +204,6 @@ if __name__ == "__main__":
                 [int(s) if s.isdigit() else s for s in args.urls])
         source.start()
         # Wait some time to make sure all cameras are connected and get frames.
-        print("Waiting for frames...")
         time.sleep(1)
         ts, frames, _ = source.next_frames()
         if ts is None or frames is None:
@@ -173,6 +217,9 @@ if __name__ == "__main__":
             if not MOGE_AVAILABLE:
                 print("MoGe-2 not found.")
                 exit(1)
+            clouds = estimate_params_moge(cameras, frames, args.loftr)
+        else:
+            clouds = estimate_params_simple(cameras, frames, args.loftr)
         # Scale distance if ground truth is provided.
         if args.distance is not None and len(cameras) >= 2:
             dist = torch.linalg.vector_norm(
@@ -180,14 +227,13 @@ if __name__ == "__main__":
             scale = args.distance / dist
             for cam in cameras:
                 cam.scale(scale)
+            for pts, _ in clouds:
+                pts *= scale
     # Setup the player and tracker.
     player = LiveSkeletonPlayer(cameras)
     if not args.no_cloud:
-        for cam, cloud in zip(cameras, clouds):
-            if cloud is not None:
-                pts, clrs = cloud
-                pts = cam.camera_to_world(torch.from_numpy(pts)).numpy()
-                player.add_point_cloud(pts, clrs)
+        for pts, clrs in clouds:
+            player.add_point_cloud(pts, clrs)
     if not args.cams_only:
         source.cameras = cameras
         source.resize = tuple(args.resize) if args.resize is not None else None
@@ -225,7 +271,7 @@ if __name__ == "__main__":
                             bgr_frame,
                             (int(kpts[i, 0]), int(kpts[i, 1])),
                             (int(kpts[j, 0]), int(kpts[j, 1])),
-                            color
+                            (color[2], color[1], color[0])
                         )
                 vis_frames.append(bgr_frame)
             vis_frames = np.concat(vis_frames)
