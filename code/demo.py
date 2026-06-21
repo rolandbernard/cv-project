@@ -4,8 +4,9 @@ import time
 import argparse
 
 import cv2
-import numpy as np
 import torch
+import numpy as np
+import scipy.interpolate
 
 import util
 from camera import Camera, triangulate
@@ -88,10 +89,11 @@ def points_from_depth(cam: Camera, depth: torch.Tensor, scale: float | torch.Ten
         torch.arange(height), torch.arange(width), indexing="ij")
     uv = cam.undistort_points(torch.stack([u, v], dim=-1))
     depth = depth.unsqueeze(-1)
-    return torch.concat([uv * depth, depth], dim=-1) * scale
+    cam3d = torch.concat([uv * depth, depth], dim=-1) * scale
+    return cam.camera_to_world(cam3d)
 
 
-def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> torch.Tensor:
     """ Evaluate the MoGe-2 model on the given image. """
     height, width = img.shape[:2]
     p_img = (img.to(torch.float32) / 255.0).permute(2, 0, 1).to(util.DEVICE)
@@ -99,27 +101,16 @@ def evaluate_moge(model, cam: Camera, img: torch.Tensor) -> tuple[torch.Tensor, 
         if cam.has_intrinsics() else None
     with torch.inference_mode():
         out = model.infer(p_img, fov_x=fov_x)
-    depth, msk = out["depth"].cpu(), out["mask"].cpu()
     if not cam.has_intrinsics():
         K: torch.Tensor = out["intrinsics"].cpu()
         K[0, :] *= width
         K[1, :] *= height
         cam.intrinsic = K
-    return depth, msk
+    return out["depth"].cpu()
 
 
-def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
+def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[np.ndarray]:
     """ Estimate camera parameters using point correspondences. """
-    # Estimate fixed intrinsics if not known.
-    for cam, img in zip(cams, imgs):
-        if not cam.has_intrinsics():
-            # Best guess for intrinsics.
-            f = 1.2 * max(*img.shape)
-            cam.intrinsic = torch.tensor([
-                [f, 0.0, img.shape[0] / 2.0],
-                [0.0, f, img.shape[1] / 2.0],
-                [0.0, 0.0, 1.0]
-            ])
     # Create matches between pixels in different images.
     matches: list[list[tuple]] = [[([], []) for _ in cams] for _ in cams]
     if use_loftr:
@@ -133,32 +124,79 @@ def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_lof
             pts1, pts2 = filter_matches(pts1, pts2)
             matches[i][j] = (pts1, pts2)
             matches[j][i] = (pts2, pts1)
-    points3d = [np.zeros_like(img) for img in imgs]
-    if not any(cam.has_extrinsics() for cam in cams):
+    points3d = [np.zeros(img.shape, dtype=np.float32) for img in imgs]
+    if any(cam.has_extrinsics() for cam in cams):
+        # Assume all extrinsics are already correct.
+        for i, ms in enumerate(matches):
+            for j, (pts1, pts2) in enumerate(ms):
+                if len(pts1) >= 1:
+                    pts3d = triangulate(
+                        [cams[i], cams[j]],
+                        [torch.from_numpy(pts1), torch.from_numpy(pts2)]
+                    ).numpy()
+                    pts1, pts2 = pts1.astype(np.int64), pts2.astype(np.int64)
+                    points3d[i][pts1[:, 1], pts1[:, 0]] = pts3d
+                    points3d[j][pts2[:, 1], pts2[:, 0]] = pts3d
+    else:
         # Start building with two cameras with most matches.
         # Add all other cameras
         raise NotImplementedError
+    return points3d
+
+
+def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
+    """ Estimate camera parameters and generate point clouds. """
+    for cam, img in zip(cams, imgs):
+        if not cam.has_intrinsics():
+            # Best guess for intrinsics.
+            f = 1.2 * max(*img.shape)
+            cam.intrinsic = torch.tensor([
+                [f, 0.0, img.shape[0] / 2.0],
+                [0.0, f, img.shape[1] / 2.0],
+                [0.0, 0.0, 1.0]
+            ])
+    points3d = estimate_params(cams, imgs, use_loftr)
     pts, clrs = [], []
-    for i, ms in enumerate(matches):
-        for j, (pts1, pts2) in enumerate(ms):
-            if len(pts1) >= 1:
-                pts3d = triangulate(
-                    [cams[i], cams[j]],
-                    [torch.from_numpy(pts1), torch.from_numpy(pts2)]
-                ).numpy()
-                pts.append(pts3d)
-                pts1, pts2 = pts1.astype(np.int64), pts2.astype(np.int64)
-                clrs.append((imgs[i][pts1[:, 1], pts1[:, 0]]
-                             + imgs[j][pts2[:, 1], pts2[:, 0]]) * 0.5)
+    for pts3d, img in zip(points3d, imgs):
+        mask = np.any(pts3d != 0, axis=2)
+        pts.append(pts3d[mask])
+        clrs.append(img[mask])
     return list(zip(pts, clrs))
 
 
 def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
-    """ Estimate camera parameters using point cloud augmented images. """
+    """ Estimate camera parameters and generate point clouds. """
     moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
     moge_model.to(util.DEVICE)
     moge_model.eval()
-    raise NotImplementedError
+    depths = []
+    for cam, img in zip(cams, imgs):
+        depths.append(evaluate_moge(moge_model, cam, img))
+    points3d = estimate_params(cams, imgs, use_loftr)
+    scales = []
+    for cam, pts3d, depth in zip(cams, points3d, depths):
+        mask = np.any(pts3d != 0, axis=2)
+        pts3d = cam.world_to_camera(torch.from_numpy(pts3d[mask])).numpy()
+        scale = np.median(depth.numpy()[mask] / pts3d[:, 2])
+        depth /= scale
+        scales.append(scale)
+        rbf = scipy.interpolate.RBFInterpolator(
+            np.argwhere(mask) / np.array(depth.shape),
+            pts3d[:, 2] / depth.numpy()[mask],
+            kernel='thin_plate_spline', smoothing=0.5
+        )
+        yy, xx = np.mgrid[0:depth.shape[0], 0:depth.shape[1]]
+        coords = np.stack([yy.ravel(), xx.ravel()], axis=-1)
+        scale_field = rbf(coords / np.array(depth.shape)).reshape(depth.shape)
+        depth[:, :] *= scale_field
+    pts_scale = np.median(scales)
+    pts, clrs = [], []
+    for cam, depth, img in zip(cams, depths, imgs):
+        cam.scale(pts_scale)
+        pts3d = points_from_depth(cam, depth, pts_scale)
+        pts.append(pts3d.numpy().reshape(-1, 3))
+        clrs.append(img.reshape(-1, 3))
+    return list(zip(pts, clrs))
 
 
 if __name__ == "__main__":

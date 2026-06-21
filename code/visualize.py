@@ -62,7 +62,7 @@ class BaseSkeletonPlayer:
         )
         self.pl.add_mesh(ground, style="wireframe", color="lightgray")
 
-    def setup_cameras(self, cameras: list, scale: float = 0.05):
+    def setup_cameras(self, cameras: list, scale: float = 0.1):
         """ Add camera frustums to the scene. """
         for i, cam in enumerate(cameras):
             rotation = np.array(cam["R"])
