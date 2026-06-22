@@ -60,29 +60,82 @@ class ConstrainedPhysics(LinearPhysics):
         self.point_mix = point_mix
         self.num_keypoint = num_keypoint
         self.constr_cov = constr_cov
+        self.num_constr = constraints.shape[1]
+
+    def compute_keypoints(self, x: torch.Tensor) -> torch.Tensor:
+        """ Compute the augmented points on which constraints are defined. """
+        *Bs, _ = x.shape
+        points = x[:self.num_keypoint*3].view(*Bs, -1, 3)
+        return torch.concat([
+            points,
+            (points[..., self.point_mix[0], :]
+             + points[..., self.point_mix[1], :]) * 0.5
+        ], dim=-2)
+
+    def basic_distances(self, points: torch.Tensor) -> torch.Tensor:
+        """ Compute the constrained distances based on augmented points. """
+        pi = points[..., self.constraints[0], :]
+        pj = points[..., self.constraints[1], :]
+        return torch.linalg.vector_norm(pi - pj, dim=-1)
 
     def compute_distances(self, x: torch.Tensor) -> torch.Tensor:
         """ Compute the constrained distances. """
-        *Bs, _ = x.shape
-        points = x[:self.num_keypoint*3].view(*Bs, -1, 3)
-        points = torch.concat([
-            points,
-            (points[..., self.point_mix[:, 0], :]
-             + points[..., self.point_mix[:, 1], :]) * 0.5
-        ], dim=-2)
-        pi = points[..., self.constraints[:, 0], :]
-        pj = points[..., self.constraints[:, 1], :]
-        return torch.linalg.vector_norm(pi - pj, dim=-1)
+        return self.basic_distances(self.compute_keypoints(x))
 
     def pseudo_obs(self, x: torch.Tensor) -> torch.Tensor:
         """ Compute the constraint violation. """
-        return self.compute_distances(x) - x[..., self.constraints[:, 2]]
+        return self.compute_distances(x) - x[..., self.constraints[2]]
 
     def to(self, *args, **kargs):
         super().to(*args, **kargs)
         self.constraints = self.constraints.to(*args, **kargs)
         self.point_mix = self.point_mix.to(*args, **kargs)
         self.constr_cov = self.constr_cov.to(*args, **kargs)
+        return self
+
+
+class WalledPhysics(ConstrainedPhysics):
+    """
+    A physics model that incorporates walls and a floor. Some keypoints are given
+    a weak prior to be on the floor, and all keypoints are push out of the walls.
+    """
+
+    def __init__(
+        self, dyn_mat: torch.Tensor, dyn_cov: torch.Tensor, init_mean: torch.Tensor,
+        init_cov: torch.Tensor, constraints: torch.Tensor, point_mix: torch.Tensor,
+        constr_cov: torch.Tensor, wall_centers: torch.Tensor, wall_norm: torch.Tensor,
+        feet_idx: torch.Tensor, feet_height: float, num_keypoint: int = 17
+    ):
+        super().__init__(
+            dyn_mat, dyn_cov, init_mean, init_cov, constraints,
+            point_mix, constr_cov, num_keypoint
+        )
+        self.wall_centers = wall_centers
+        self.wall_norm = wall_norm
+        self.feet_idx = feet_idx
+        self.feet_height = feet_height
+        self.num_constr = constraints.shape[1] \
+            + num_keypoint * wall_centers.shape[0] + feet_idx.shape[1]
+
+    def pseudo_obs(self, x: torch.Tensor) -> torch.Tensor:
+        """ Compute the constraint violation. """
+        *Bs, _ = x.shape
+        points = x[:self.num_keypoint*3].view(*Bs, -1, 3)
+        w_dist = ((points.view(*Bs, -1, 1, 3) - self.wall_centers.view(*Bs, 1, -1, 3))
+                  .view(*Bs, -1, 1, 1, 3) @ self.wall_norm.view(*Bs, 1, -1, 3, 1)) \
+            .squeeze(-1).squeeze(-1)
+        return torch.concat([
+            super().pseudo_obs(x),
+            torch.nn.functional.relu(-w_dist.view(*Bs, -1)),
+            w_dist[..., self.feet_idx[0], self.feet_idx[1]].view(*Bs, -1)
+            - self.feet_height,
+        ], dim=-1)
+
+    def to(self, *args, **kargs):
+        super().to(*args, **kargs)
+        self.wall_centers = self.wall_centers.to(*args, **kargs)
+        self.wall_norm = self.wall_norm.to(*args, **kargs)
+        self.feet_idx = self.feet_idx.to(*args, **kargs)
         return self
 
 

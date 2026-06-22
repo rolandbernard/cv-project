@@ -261,7 +261,7 @@ class Tracker:
         full_mean = self.physics.init_mean.clone()
         full_mean[:self.num_keypoint*3] = mean
         if isinstance(self.physics, ConstrainedPhysics):
-            full_mean[self.physics.constraints[:, 2]] \
+            full_mean[self.physics.constraints[2]] \
                 = self.physics.compute_distances(mean)
         full_cov = self.physics.init_cov.clone()
         return Track(self.last_id, full_mean, full_cov, self.num_keypoint)
@@ -275,9 +275,9 @@ class Tracker:
         # Add pseudo-observation for limb length constraints.
         if isinstance(self.physics, ConstrainedPhysics):
             ob_fs.append(lambda x: self.physics.pseudo_obs(x))  # type: ignore
-            num_const = self.physics.constraints.shape[0]
             # Constraints are supposed to have zero difference.
-            ob_ms.append(torch.zeros(num_const, device=track.mean.device))
+            ob_ms.append(torch.zeros(
+                self.physics.num_constr, device=track.mean.device))
             ob_vs.append(self.physics.constr_cov)
         ob_f, ob_m, ob_v = kalman.emerge_obs(ob_fs, ob_ms, ob_vs)
         mean, cov = kalman.eupdate(track.mean, track.cov, ob_m, ob_v, ob_f)
@@ -469,6 +469,28 @@ class CrossViewFirstTracker(Tracker):
         self.tracks = new_tracks
 
 
+def build_physics(scale=100.0) -> LinearPhysics:
+    """
+    Build some standard physics based on the given scale. The scale must be
+    relative to meters, i.e., `scale=100` means centimeter units.
+    """
+    nk = 17*3
+    dyn_mat = torch.concat([
+        torch.concat([torch.zeros(nk, nk), torch.eye(nk)], dim=1),
+        torch.concat([torch.zeros(nk, nk), torch.eye(nk)*-0.2], dim=1)
+    ], dim=0)
+    dyn_cov = torch.diag(torch.concat([
+        torch.full((nk,), (0.05 * scale)**2),
+        torch.full((nk,), (3.0 * scale)**2),
+    ]))
+    init_mean = torch.zeros(nk + nk)
+    init_cov = torch.diag(torch.concat([
+        torch.full((nk,), (1.0 * scale)**2),
+        torch.full((nk,), (5.0 * scale)**2),
+    ]))
+    return LinearPhysics(dyn_mat, dyn_cov, init_mean, init_cov)
+
+
 def build_constrained_physics(scale=100.0, sym=True) -> kalman.ConstrainedPhysics:
     """ Build physics that includes limb length estimation and rigid body constraints. """
     links = util.RIGID_SKELETON
@@ -481,11 +503,11 @@ def build_constrained_physics(scale=100.0, sym=True) -> kalman.ConstrainedPhysic
             torch.zeros(nk, nk), torch.eye(nk)*-0.2, torch.zeros(nk, num_len)], dim=1),
         torch.zeros(num_len, 2*nk + num_len)
     ], dim=0)
-    dyn_cov = torch.diag(torch.tensor(
-        [(0.05 * scale)**2]*nk
-        + [(3.0 * scale)**2]*nk
-        + [(0.001 * scale)**2]*num_len
-    ))
+    dyn_cov = torch.diag(torch.concat([
+        torch.full((nk,), (0.01 * scale)**2),
+        torch.full((nk,), (3.0 * scale)**2),
+        torch.full((num_len,), (0.01 * scale)**2),
+    ]))
     init_mean = torch.zeros(nk + nk + num_len)
     init_cov = torch.diag(torch.concat([
         torch.full((nk,), (1.0 * scale)**2),
@@ -495,29 +517,49 @@ def build_constrained_physics(scale=100.0, sym=True) -> kalman.ConstrainedPhysic
     constraints = torch.tensor([
         [i, j, 2*nk + (util.RIGID_SKELETON_SYM[k] if sym else k)]
         for k, (i, j) in enumerate(links)
-    ], dtype=torch.long)
-    point_mix = torch.tensor([[5, 6], [11, 12]], dtype=torch.long)
-    constr_cov = torch.eye(num_links) * (0.001 * scale)**2
+    ], dtype=torch.long).T
+    point_mix = torch.tensor([[5, 6], [11, 12]], dtype=torch.long).T
+    constr_cov = torch.eye(num_links) * (0.1 * scale)**2
     return kalman.ConstrainedPhysics(
         dyn_mat, dyn_cov, init_mean, init_cov, constraints, point_mix, constr_cov)
 
 
-def build_physics(scale=100.0) -> LinearPhysics:
-    """
-    Build some standard physics based on the given scale. The scale must be
-    relative to meters, i.e., `scale=100` means centimeter units.
-    """
-    nk = 17*3
+def build_walled_physics(scale=100.0, sym=True, center=(0, 0, 0), up=(0, -1, 0)) -> kalman.ConstrainedPhysics:
+    """ Build physics that includes limb length and wall/floor constraints. """
+    links = util.RIGID_SKELETON
+    nkp, nk, num_links = 17, 17*3, len(links)
+    num_len = max(util.RIGID_SKELETON_SYM) + 1 if sym else num_links
     dyn_mat = torch.concat([
-        torch.concat([torch.zeros(nk, nk), torch.eye(nk)], dim=1),
-        torch.concat([torch.zeros(nk, nk), torch.eye(nk)*-0.2], dim=1)
+        torch.concat([
+            torch.zeros(nk, nk), torch.eye(nk), torch.zeros(nk, num_len)], dim=1),
+        torch.concat([
+            torch.zeros(nk, nk), torch.eye(nk)*-0.2, torch.zeros(nk, num_len)], dim=1),
+        torch.zeros(num_len, 2*nk + num_len)
     ], dim=0)
-    dyn_cov = torch.diag(torch.tensor(
-        [(0.05 * scale)**2]*nk + [(3.0 * scale)**2]*nk
-    ))
-    init_mean = torch.zeros(nk + nk)
+    dyn_cov = torch.diag(torch.concat([
+        torch.full((nk,), (0.01 * scale)**2),
+        torch.full((nk,), (3.0 * scale)**2),
+        torch.full((num_len,), (0.01 * scale)**2),
+    ]))
+    init_mean = torch.zeros(nk + nk + num_len)
     init_cov = torch.diag(torch.concat([
         torch.full((nk,), (1.0 * scale)**2),
         torch.full((nk,), (5.0 * scale)**2),
+        torch.full((num_len,), (1.0 * scale)**2),
     ]))
-    return LinearPhysics(dyn_mat, dyn_cov, init_mean, init_cov)
+    constraints = torch.tensor([
+        [i, j, 2*nk + (util.RIGID_SKELETON_SYM[k] if sym else k)]
+        for k, (i, j) in enumerate(links)
+    ], dtype=torch.long).T
+    point_mix = torch.tensor([[5, 6], [11, 12]], dtype=torch.long).T
+    constr_cov = torch.diag(torch.concat([
+        torch.full((num_links,), (0.1 * scale)**2),
+        torch.full((nkp,), (1.0 * scale)**2),
+        torch.full((2,), (2.0 * scale)**2),
+    ]))
+    wall_centers = torch.tensor([center], dtype=torch.float32)
+    wall_norm = torch.tensor([up], dtype=torch.float32)
+    feet_kpts = torch.tensor([[15, 0], [16, 0]], dtype=torch.long).T
+    return kalman.WalledPhysics(
+        dyn_mat, dyn_cov, init_mean, init_cov, constraints, point_mix,
+        constr_cov, wall_centers, wall_norm, feet_kpts, 0.05 * scale)
