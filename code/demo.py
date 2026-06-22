@@ -139,13 +139,14 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
         model = LoFTR("indoor_new")
     for i in range(len(cams)):
         for j in range(i):
-            if use_loftr:
-                pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
-            else:
-                pts1, pts2 = match_images_sift(imgs[i], imgs[j])
-            pts1, pts2 = filter_matches(pts1, pts2, cams[i], cams[j])
-            matches[i][j] = (pts1, pts2)
-            matches[j][i] = (pts2, pts1)
+            if cams[i].forward() @ cams[j].forward() > 0:
+                if use_loftr:
+                    pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
+                else:
+                    pts1, pts2 = match_images_sift(imgs[i], imgs[j])
+                pts1, pts2 = filter_matches(pts1, pts2, cams[i], cams[j])
+                matches[i][j] = (pts1, pts2)
+                matches[j][i] = (pts2, pts1)
     points3d = [np.zeros(img.shape, dtype=np.float32) for img in imgs]
     if any(cam.has_extrinsics() for cam in cams):
         # Assume all extrinsics are already correct.
@@ -264,6 +265,7 @@ def depth_refinement(dense: np.ndarray, mask: np.ndarray, sparse: np.ndarray) ->
 
 def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
     """ Estimate camera parameters and generate point clouds. """
+    known_extr = any(cam.has_extrinsics() for cam in cams)
     moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
     moge_model.to(util.DEVICE)
     moge_model.eval()
@@ -279,7 +281,7 @@ def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr
         depth /= scale
         scales.append(scale)
         depth[:, :] = depth_refinement(depth, mask, pts3d[..., 2])
-    pts_scale = np.median(scales)
+    pts_scale = 1 if known_extr else np.median(scales)
     pts, clrs = [], []
     for cam, depth, img in zip(cams, depths, imgs):
         cam.scale(pts_scale)
@@ -287,6 +289,54 @@ def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr
         pts.append(pts3d.numpy().reshape(-1, 3))
         clrs.append(img.reshape(-1, 3))
     return list(zip(pts, clrs))
+
+
+def augment_tracks(
+    file: str, cams: list[Camera], streams: list[str],
+    use_loftr: bool = False, use_moge: bool = False
+):
+    """
+    Augments a recorded tracking data JSON file with video stream URLs,
+    point cloud 3D coordinates, and their colors.
+    """
+    data = util.load_json(file)
+    backgrounds = []
+    for video_path in streams:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video source {video_path}")
+        frame_cnt = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        indices = np.linspace(0, frame_cnt - 1, min(100, frame_cnt), dtype=int)
+        frames = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        cap.release()
+        if len(frames) == 0:
+            raise RuntimeError(f"Could not read video source {video_path}")
+        bg_img = np.median(frames, axis=0).astype(np.uint8)
+        backgrounds.append(torch.from_numpy(bg_img))
+    if use_loftr:
+        if not LOFTR_AVAILABLE:
+            raise RuntimeError("LoFTR not found.")
+    if use_moge:
+        if not MOGE_AVAILABLE:
+            raise RuntimeError("MoGe-2 not found.")
+        clouds = estimate_params_moge(cams, backgrounds, use_loftr)
+    else:
+        clouds = estimate_params_simple(cams, backgrounds, use_loftr)
+    all_pts, all_clrs = [], []
+    for pts, clrs in clouds:
+        all_pts.append(pts)
+        all_clrs.append(clrs)
+    data["stream"] = [os.path.abspath(p) for p in streams]
+    data["points"] = util.to_list(np.concat(all_pts, axis=0))
+    data["colors"] = util.to_list(np.concat(all_clrs, axis=0))
+    data["cameras"] = [
+        {k: util.to_list(c[k]) for k in ["R", "t", "K", "distCoef"]} for c in cams]
+    util.save_json(file, data)
 
 
 if __name__ == "__main__":
@@ -299,6 +349,8 @@ if __name__ == "__main__":
                         help="Calibration files for cameras")
     parser.add_argument("--distance", type=float,
                         help="Known distance between cameras for scaling")
+    parser.add_argument("--scale", type=float,
+                        help="Known unit scale of the extrinsics in meters")
     parser.add_argument("--resize", type=int, nargs=2,
                         help="Resize frames to (width, height)")
     parser.add_argument("--moge", action="store_true",
@@ -349,10 +401,14 @@ if __name__ == "__main__":
         else:
             clouds = estimate_params_simple(cameras, frames, args.loftr)
         # Scale distance if ground truth is provided.
+        scale = 1
         if args.distance is not None and len(cameras) >= 2:
             dist = torch.linalg.vector_norm(
                 cameras[0].center() - cameras[1].center()).item()
             scale = args.distance / dist
+        elif args.scale is not None:
+            scale = args.scale
+        if scale != 1:
             for cam in cameras:
                 cam.scale(scale)
             for pts, _ in clouds:

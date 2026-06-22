@@ -89,7 +89,7 @@ def save_tracks(
 ):
     """ Save recorded tracking data to the given file. """
     save_json(file, {
-        "cameras": [{k: to_list(c[k]) for k in ["R", "t", "K"]} for c in cams],
+        "cameras": [{k: to_list(c[k]) for k in ["R", "t", "K", "distCoef"]} for c in cams],
         "frames": [[{k: to_list(t[k]) for k in ["id", "kpts"]} for t in f] for f in frames],
         "fps": fps, "center": list(center), "up": list(up)
     })

@@ -2,7 +2,6 @@
 import json
 import configparser
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 
@@ -160,6 +159,10 @@ class Camera:
     def center(self) -> torch.Tensor:
         """ Compute the camera center with respect to the world. """
         return -self.rotation.mT @ self.translation
+
+    def forward(self) -> torch.Tensor:
+        """ Compute the camera forward direction with respect to the world. """
+        return self.rotation.mT @ torch.tensor([0.0, 0.0, 1.0])
 
     def proj_matrix(self) -> torch.Tensor:
         """ Compute the camera projection matrix. """

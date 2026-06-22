@@ -128,7 +128,7 @@ class BaseSkeletonPlayer:
             ])
         return kpts
 
-    def add_point_cloud(self, points, colors, point_size=2):
+    def add_point_cloud(self, points, colors, point_size=2,  opacity=0.5):
         """ Add a point cloud to the 3D visualization. """
         poly = pv.PolyData(points)
         poly["colors"] = colors
@@ -136,7 +136,7 @@ class BaseSkeletonPlayer:
             poly, scalars="colors", rgb=True,
             point_size=point_size,
             render_points_as_spheres=True,
-            opacity=0.6
+            opacity=opacity
         )
 
     def set_frame(self, tracks, gt_tracks=None):
@@ -168,7 +168,7 @@ class SkeletonPlayer(BaseSkeletonPlayer):
 
     def __init__(
         self, cameras: list, frames: list, fps: float, center=(0, 0, 0),
-        up=(0, -1, 0), gt_frames: None | list = None
+        up=(0, -1, 0), gt_frames: None | list = None, streams=None
     ):
         super().__init__(cameras, center, up)
         self.fps = fps
@@ -177,19 +177,42 @@ class SkeletonPlayer(BaseSkeletonPlayer):
         self.current_frame = 0
         self.is_playing = False
         self.setup_ground(center, up)
+        self.caps = []
+        self.cameras = cameras
+        for stream in streams or []:
+            cap = cv2.VideoCapture(stream)
+            if not cap.isOpened():
+                print(f"Warning: could not open stream {stream}")
+            self.caps.append(cap)
         self.setup_widgets()
         self.update_scene(0)
+
+    def __del__(self):
+        for cap in self.caps:
+            cap.release()
+        cv2.destroyAllWindows()
 
     def update_scene(self, value):
         """ Callback for slider widget. """
         frame_idx = int(np.round(value))
         if frame_idx >= len(self.frames):
             frame_idx = len(self.frames) - 1
+        last_idx = self.current_frame
         self.current_frame = frame_idx
+        tracks = self.frames[frame_idx]
         gt_tracks = None
-        if self.gt_frames and self.current_frame < len(self.gt_frames):
-            gt_tracks = self.gt_frames[self.current_frame]
-        self.set_frame(self.frames[self.current_frame], gt_tracks)
+        if self.gt_frames and frame_idx < len(self.gt_frames):
+            gt_tracks = self.gt_frames[frame_idx]
+        self.set_frame(tracks, gt_tracks)
+        if len(self.caps) > 0:
+            imgs = []
+            for cap in self.caps:
+                if last_idx != frame_idx - 1:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                _, img = cap.read()
+                imgs.append(img)
+            show_cv2_images(self.cameras, imgs, tracks, gt_tracks)
+            cv2.waitKey(1)
 
     def toggle_play(self):
         """ Toggle playback on/off. """
@@ -199,6 +222,7 @@ class SkeletonPlayer(BaseSkeletonPlayer):
         """ Timer callback for automatic playback. """
         if self.is_playing:
             self.next_frame()
+        cv2.waitKey(1)
 
     def next_frame(self):
         """ Advance to the next frame. """
@@ -248,40 +272,82 @@ class LiveSkeletonPlayer(BaseSkeletonPlayer):
         self.pl.update()
 
 
-def load_from_files(main_file: str, gt_file: None | str = None) -> SkeletonPlayer:
+def load_from_files(
+    main_file: str, gt_file: None | str = None, streams: None | list[str] = None, no_cloud: bool = False, no_gt: bool = False
+) -> SkeletonPlayer:
     """ Load results and optional ground truth from the given files. """
-    cams, frames, fps, center, up = util.load_tracks(main_file)
+    data = util.load_json(main_file)
+    cams, frames, fps = data["cameras"], data["frames"], data["fps"]
+    center, up = data.get("center"), data.get("up")
+    points, colors = data.get("points"), data.get("colors")
+    if streams is None:
+        streams = data.get("stream")
     gt_frames = None
     if gt_file is not None:
-        _, gt_frames, _, _, _ = util.load_tracks(gt_file)
-    return SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
+        gt_data = util.load_json(gt_file)
+        if not no_gt:
+            gt_frames = gt_data["frames"]
+        if center is None or up is None:
+            center, up = gt_data.get("center"), gt_data.get("up")
+        if points is None or colors is None:
+            points, colors = gt_data.get("points"), gt_data.get("colors")
+        if streams is None:
+            streams = gt_data.get("stream")
+    player = SkeletonPlayer(
+        cams, frames, fps, center, up, gt_frames, streams=streams)
+    if not no_cloud and points is not None and colors is not None:
+        player.add_point_cloud(np.array(points), np.array(colors))
+    return player
 
 
-def show_cv2_images(cams: list, imgs: list[np.ndarray], tracks: list):
+def show_cv2_images(cams: list, imgs: list[np.ndarray], tracks: list, gt_tracks: None | list = None):
     """ Show images from the cameras in OpenCV image showing tracks. """
     vis_frames = []
     for cam, f in zip(cams, imgs):
-        vis_frame = f.copy()
-        for track in tracks:
-            color = util.COLORS_TUPLE[track["id"] % len(util.COLORS)]
-            kpts = np.array(track["kpts"])
+        if f is not None:
+            vis_frame = f.copy()
             rvec, _ = cv2.Rodrigues(np.array(cam["R"]))
             t, K = np.array(cam["t"]), np.array(cam["K"])
-            dist = np.array(cam["distCoef"])
-            kpts, _ = cv2.projectPoints(kpts, rvec, t, K, dist)
-            for i, j in util.SKELETON:
-                cv2.line(
-                    vis_frame,
-                    (int(kpts[i, 0, 0]), int(kpts[i, 0, 1])),
-                    (int(kpts[j, 0, 0]), int(kpts[j, 0, 1])),
-                    (color[2], color[1], color[0])
-                )
-        vis_frames.append(vis_frame)
-    vis_frames = np.concat(vis_frames)
-    if vis_frames.shape[0] > 1000:
-        width = round(vis_frames.shape[1] * 1000 / vis_frames.shape[0])
-        vis_frames = cv2.resize(vis_frames, (width, 1000))
-    cv2.imshow("Streams", vis_frames)
+            dist = np.array(cam.get("distCoef") or [0.0]*5)
+            if gt_tracks is not None:
+                for track in gt_tracks:
+                    kpts = np.array(track["kpts"])
+                    kpts = np.clip(
+                        cv2.projectPoints(kpts, rvec, t, K, dist)[0], -1e5, 1e5)
+                    for i, j in util.SKELETON:
+                        cv2.line(
+                            vis_frame,
+                            (int(kpts[i, 0, 0]), int(kpts[i, 0, 1])),
+                            (int(kpts[j, 0, 0]), int(kpts[j, 0, 1])),
+                            (0, 0, 255), 1
+                        )
+            for track in tracks:
+                color = util.COLORS_TUPLE[track["id"] % len(util.COLORS)]
+                kpts = np.array(track["kpts"])
+                kpts = np.clip(
+                    cv2.projectPoints(kpts, rvec, t, K, dist)[0], -1e5, 1e5)
+                for i, j in util.SKELETON:
+                    cv2.line(
+                        vis_frame,
+                        (int(kpts[i, 0, 0]), int(kpts[i, 0, 1])),
+                        (int(kpts[j, 0, 0]), int(kpts[j, 0, 1])),
+                        (color[2], color[1], color[0]), 3
+                    )
+            vis_frames.append(vis_frame)
+    if len(vis_frames) > 0:
+        if len(vis_frames) < 8:
+            vis_frames = np.concat(vis_frames)
+        else:
+            if len(vis_frames) % 2 == 1:
+                vis_frames.append(np.zeros_like(vis_frames[0]))
+            vis_frames = np.concat([
+                np.concat(vis_frames[::2]),
+                np.concat(vis_frames[1::2])
+            ], axis=1)
+        if vis_frames.shape[0] > 1000:
+            width = round(vis_frames.shape[1] * 1000 / vis_frames.shape[0])
+            vis_frames = cv2.resize(vis_frames, (width, 1000))
+        cv2.imshow("Streams", vis_frames)
 
 
 if __name__ == "__main__":
@@ -290,16 +356,19 @@ if __name__ == "__main__":
         description="3D skeleton tracking visualization.")
     parser.add_argument("path", help="Paths to recorded .json file")
     parser.add_argument("--gt-path", help="Paths to ground truth .json file")
+    parser.add_argument("--streams", nargs="+", help="Paths to video streams")
+    parser.add_argument("--no-cloud", action="store_true",
+                        help="Do not add point clouds to the visualization")
+    parser.add_argument("--no-gt", action="store_true",
+                        help="Do not add show ground truth tracks")
     args = parser.parse_args()
     if not os.path.isfile(args.path):
         print(f"Unable to open tracking file '{args.path}'")
         exit(1)
-    cams, frames, fps, center, up = util.load_tracks(args.path)
-    gt_frames = None
     if args.gt_path is not None:
         if not os.path.isfile(args.gt_path):
             print(f"Unable to open ground truth file '{args.gt_path}'")
             exit(1)
-        _, gt_frames, _, _, _ = util.load_tracks(args.gt_path)
-    player = SkeletonPlayer(cams, frames, fps, center, up, gt_frames)
+    player = load_from_files(
+        args.path, args.gt_path, args.streams, args.no_cloud, args.no_gt)
     player.show()
