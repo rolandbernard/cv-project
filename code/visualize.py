@@ -4,6 +4,7 @@ import argparse
 from typing import Any
 
 import cv2
+import scipy.ndimage
 import pyvista as pv
 import numpy as np
 
@@ -128,16 +129,37 @@ class BaseSkeletonPlayer:
             ])
         return kpts
 
-    def add_point_cloud(self, points, colors, point_size=2,  opacity=0.5):
-        """ Add a point cloud to the 3D visualization. """
-        poly = pv.PolyData(points)
-        poly["colors"] = colors
-        self.pl.add_mesh(
-            poly, scalars="colors", rgb=True,
-            point_size=point_size,
-            render_points_as_spheres=True,
-            opacity=opacity
-        )
+    def add_point_cloud(self, points, colors, point_size=2, opacity=0.5):
+        """ Add a point cloud or structured mesh to the 3D visualization. """
+        if points.ndim == 3:
+            # Create a mesh if we have a dense depth map.
+            grid = pv.StructuredGrid()
+            grid.points = points.reshape(-1, 3)
+            grid.dimensions = (points.shape[1], points.shape[0], 1)
+            grid.point_data["colors"] = colors.reshape(-1, 3)
+            unstructured_grid = grid.cast_to_unstructured_grid()
+            grid_with_quality = unstructured_grid \
+                .cell_quality(quality_measure="aspect_ratio")
+            grid_points = grid_with_quality.cell_data_to_point_data()
+            ratio = grid_points.point_data["aspect_ratio"]
+            ratio = scipy.ndimage.gaussian_filter(ratio, 2.0)
+            grid_points.point_data["aspect_ratio"] = ratio
+            broken_mesh = grid_points.threshold(
+                value=5.0, invert=True,
+                scalars="aspect_ratio", preference="point"
+            )
+            self.pl.add_mesh(
+                broken_mesh, scalars="colors", rgb=True, culling="front",
+            )
+        else:
+            poly = pv.PolyData(points)
+            poly["colors"] = colors
+            self.pl.add_mesh(
+                poly, scalars="colors", rgb=True,
+                point_size=point_size,
+                render_points_as_spheres=True,
+                opacity=opacity
+            )
 
     def set_frame(self, tracks, gt_tracks=None):
         """ Update the scene with a new set of tracks. """
@@ -296,7 +318,11 @@ def load_from_files(
     player = SkeletonPlayer(
         cams, frames, fps, center, up, gt_frames, streams=streams)
     if not no_cloud and points is not None and colors is not None:
-        player.add_point_cloud(np.array(points), np.array(colors))
+        if len(points) > 0 and len(points[0]) > 0 and isinstance(points[0][0], list):
+            for pts, clrs in zip(points, colors):
+                player.add_point_cloud(np.array(pts), np.array(clrs))
+        else:
+            player.add_point_cloud(np.array(points), np.array(colors))
     return player
 
 
@@ -308,7 +334,10 @@ def show_cv2_images(cams: list, imgs: list[np.ndarray], tracks: list, gt_tracks:
             vis_frame = f.copy()
             rvec, _ = cv2.Rodrigues(np.array(cam["R"]))
             t, K = np.array(cam["t"]), np.array(cam["K"])
-            dist = np.array(cam.get("distCoef") or [0.0]*5)
+            try:
+                dist = np.array(cam["distCoef"])
+            except KeyError:
+                dist = np.zeros(5)
             if gt_tracks is not None:
                 for track in gt_tracks:
                     kpts = np.array(track["kpts"])

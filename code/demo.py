@@ -6,6 +6,7 @@ import argparse
 import cv2
 import torch
 import numpy as np
+import scipy.ndimage
 import scipy.sparse
 import scipy.sparse.linalg
 
@@ -139,7 +140,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
         model = LoFTR("indoor_new")
     for i in range(len(cams)):
         for j in range(i):
-            if cams[i].forward() @ cams[j].forward() > 0:
+            if cams[i].forward() @ cams[j].forward() > 0.5:
                 if use_loftr:
                     pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
                 else:
@@ -182,7 +183,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
             )
             pts2d, pts3d = [], []
             for j, (pts1, pts2) in enumerate(matches[mi]):
-                if len(pts1) >= 1:
+                if j in added and len(pts1) >= 1:
                     pts2 = pts2.astype(np.int64)
                     pt3d = points3d[j][pts2[:, 1], pts2[:, 0]]
                     mask = np.any(pt3d != 0, axis=1)
@@ -200,7 +201,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
             cams[mi].translation \
                 = torch.from_numpy(t.astype(np.float32).flatten())
             for j, (pts1, pts2) in enumerate(matches[mi]):
-                if len(pts1) >= 1:
+                if j in added and len(pts1) >= 1 and cams[mi].forward() @ cams[j].forward() > 0.5:
                     pts1, pts2, pts3d \
                         = triangulate_matches(pts1, pts2, cams[mi], cams[j])
                     points3d[mi][pts1[:, 1], pts1[:, 0]] = pts3d
@@ -232,16 +233,25 @@ def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_lof
 
 def depth_refinement(dense: np.ndarray, mask: np.ndarray, sparse: np.ndarray) -> np.ndarray:
     """ Refines a dense depth map using sparse anchors while respecting object edges. """
-    lam, alpha, iters = 10.0, 100.0, 3
+    lam, alpha, blur, iters = 0.5, 0.5, 2.0, 3
     height, width = dense.shape
     pixels = height * width
+    sx, sy = scipy.ndimage.sobel(dense, 0), scipy.ndimage.sobel(dense, 1)
+    sxy = np.sqrt(sx**2 + sy**2)
+    sxy = np.maximum(sxy, scipy.ndimage.gaussian_filter(sxy, blur)) \
+        .flatten()
+    wxy = np.exp(-(alpha * sxy / np.median(sxy)))
     idx = np.arange(pixels).reshape((height, width))
     idx_left, idx_right = idx[:, :-1].flatten(), idx[:, 1:].flatten()
-    grad_x = (dense[:, :-1] - dense[:, 1:]).flatten()
-    wx = np.exp(-alpha * grad_x*grad_x / dense.var())
+    grad_x = np.abs(dense[:, :-1] - dense[:, 1:])
+    grad_x = np.maximum(grad_x, scipy.ndimage.gaussian_filter(grad_x, blur)) \
+        .flatten()
+    wx = np.exp(-(alpha * grad_x / np.median(grad_x)))
     idx_top, idx_bot = idx[:-1, :].flatten(), idx[1:, :].flatten()
-    grad_y = (dense[:-1, :] - dense[1:, :]).flatten()
-    wy = np.exp(-alpha * grad_y*grad_y / dense.var())
+    grad_y = np.abs(dense[:-1, :] - dense[1:, :])
+    grad_y = np.maximum(grad_y, scipy.ndimage.gaussian_filter(grad_y, blur)) \
+        .flatten()
+    wy = np.exp(-(alpha * grad_y / np.median(grad_y)))
     row = np.concatenate([idx_left, idx_right, idx_top, idx_bot])
     col = np.concatenate([idx_right, idx_left, idx_bot, idx_top])
     data = np.concatenate([wx, wx, wy, wy])
@@ -253,7 +263,7 @@ def depth_refinement(dense: np.ndarray, mask: np.ndarray, sparse: np.ndarray) ->
     conf_weights = np.ones(pixels)
     scale_field = np.ones(pixels)
     for _ in range(iters):
-        dynamic_lam = mask_f * lam * conf_weights
+        dynamic_lam = mask_f * lam * conf_weights * wxy
         A = deg - adj + scipy.sparse.diags(dynamic_lam)
         b = dynamic_lam * target_scales.flatten()
         scale_field, _ = scipy.sparse.linalg.cg(A, b, x0=scale_field)
@@ -286,8 +296,8 @@ def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr
     for cam, depth, img in zip(cams, depths, imgs):
         cam.scale(pts_scale)
         pts3d = points_from_depth(cam, torch.from_numpy(depth), pts_scale)
-        pts.append(pts3d.numpy().reshape(-1, 3))
-        clrs.append(img.reshape(-1, 3))
+        pts.append(pts3d.numpy())
+        clrs.append(img.numpy())
     return list(zip(pts, clrs))
 
 
@@ -305,18 +315,11 @@ def augment_tracks(
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video source {video_path}")
-        frame_cnt = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        indices = np.linspace(0, frame_cnt - 1, min(100, frame_cnt), dtype=int)
-        frames = []
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        ret, frame = cap.read()
         cap.release()
-        if len(frames) == 0:
+        if not ret:
             raise RuntimeError(f"Could not read video source {video_path}")
-        bg_img = np.median(frames, axis=0).astype(np.uint8)
+        bg_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         backgrounds.append(torch.from_numpy(bg_img))
     if use_loftr:
         if not LOFTR_AVAILABLE:
@@ -332,8 +335,8 @@ def augment_tracks(
         all_pts.append(pts)
         all_clrs.append(clrs)
     data["stream"] = [os.path.abspath(p) for p in streams]
-    data["points"] = util.to_list(np.concat(all_pts, axis=0))
-    data["colors"] = util.to_list(np.concat(all_clrs, axis=0))
+    data["points"] = [util.to_list(pts) for pts in all_pts]
+    data["colors"] = [util.to_list(clrs) for clrs in all_clrs]
     data["cameras"] = [
         {k: util.to_list(c[k]) for k in ["R", "t", "K", "distCoef"]} for c in cams]
     util.save_json(file, data)
