@@ -295,7 +295,8 @@ class LiveSkeletonPlayer(BaseSkeletonPlayer):
 
 
 def load_from_files(
-    main_file: str, gt_file: None | str = None, streams: None | list[str] = None, no_cloud: bool = False, no_gt: bool = False
+    main_file: str, gt_file: None | str = None, streams: None | list[str] = None,
+    no_cloud: bool = False, no_gt: bool = False, env_file: None | str = None
 ) -> SkeletonPlayer:
     """ Load results and optional ground truth from the given files. """
     data = util.load_json(main_file)
@@ -315,6 +316,10 @@ def load_from_files(
             points, colors = gt_data.get("points"), gt_data.get("colors")
         if streams is None:
             streams = gt_data.get("stream")
+    if env_file is not None:
+        env_data = util.load_json(env_file)
+        center, up = env_data.get("center"), env_data.get("up")
+        points, colors = env_data.get("points"), env_data.get("colors")
     player = SkeletonPlayer(
         cams, frames, fps, center, up, gt_frames, streams=streams)
     if not no_cloud and points is not None and colors is not None:
@@ -385,6 +390,7 @@ if __name__ == "__main__":
         description="3D skeleton tracking visualization.")
     parser.add_argument("path", help="Paths to recorded .json file")
     parser.add_argument("--gt-path", help="Paths to ground truth .json file")
+    parser.add_argument("--env-path", help="Paths to environment .json file")
     parser.add_argument("--streams", nargs="+", help="Paths to video streams")
     parser.add_argument("--no-cloud", action="store_true",
                         help="Do not add point clouds to the visualization")
@@ -398,6 +404,11 @@ if __name__ == "__main__":
         if not os.path.isfile(args.gt_path):
             print(f"Unable to open ground truth file '{args.gt_path}'")
             exit(1)
+    if args.env_path is not None:
+        if not os.path.isfile(args.env_path):
+            print(f"Unable to open environment file '{args.env_path}'")
+            exit(1)
     player = load_from_files(
-        args.path, args.gt_path, args.streams, args.no_cloud, args.no_gt)
+        args.path, args.gt_path, args.streams,
+        args.no_cloud, args.no_gt, args.env_path)
     player.show()

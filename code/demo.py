@@ -6,9 +6,7 @@ import argparse
 import cv2
 import torch
 import numpy as np
-import scipy.ndimage
-import scipy.sparse
-import scipy.sparse.linalg
+import scipy.interpolate
 
 import util
 from camera import Camera, triangulate
@@ -140,7 +138,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
         model = LoFTR("indoor_new")
     for i in range(len(cams)):
         for j in range(i):
-            if cams[i].forward() @ cams[j].forward() > 0.5:
+            if cams[i].forward() @ cams[j].forward() > 0.7:
                 if use_loftr:
                     pts1, pts2 = match_images_loftr(model, imgs[i], imgs[j])
                 else:
@@ -201,7 +199,7 @@ def estimate_params(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: boo
             cams[mi].translation \
                 = torch.from_numpy(t.astype(np.float32).flatten())
             for j, (pts1, pts2) in enumerate(matches[mi]):
-                if j in added and len(pts1) >= 1 and cams[mi].forward() @ cams[j].forward() > 0.5:
+                if j in added and len(pts1) >= 1 and cams[mi].forward() @ cams[j].forward() > 0.7:
                     pts1, pts2, pts3d \
                         = triangulate_matches(pts1, pts2, cams[mi], cams[j])
                     points3d[mi][pts1[:, 1], pts1[:, 0]] = pts3d
@@ -232,48 +230,21 @@ def estimate_params_simple(cams: list[Camera], imgs: list[torch.Tensor], use_lof
 
 
 def depth_refinement(dense: np.ndarray, mask: np.ndarray, sparse: np.ndarray) -> np.ndarray:
-    """ Refines a dense depth map using sparse anchors while respecting object edges. """
-    lam, alpha, blur, iters = 0.5, 0.5, 2.0, 3
-    height, width = dense.shape
-    pixels = height * width
-    sx, sy = scipy.ndimage.sobel(dense, 0), scipy.ndimage.sobel(dense, 1)
-    sxy = np.sqrt(sx**2 + sy**2)
-    sxy = np.maximum(sxy, scipy.ndimage.gaussian_filter(sxy, blur)) \
-        .flatten()
-    wxy = np.exp(-(alpha * sxy / np.median(sxy)))
-    idx = np.arange(pixels).reshape((height, width))
-    idx_left, idx_right = idx[:, :-1].flatten(), idx[:, 1:].flatten()
-    grad_x = np.abs(dense[:, :-1] - dense[:, 1:])
-    grad_x = np.maximum(grad_x, scipy.ndimage.gaussian_filter(grad_x, blur)) \
-        .flatten()
-    wx = np.exp(-(alpha * grad_x / np.median(grad_x)))
-    idx_top, idx_bot = idx[:-1, :].flatten(), idx[1:, :].flatten()
-    grad_y = np.abs(dense[:-1, :] - dense[1:, :])
-    grad_y = np.maximum(grad_y, scipy.ndimage.gaussian_filter(grad_y, blur)) \
-        .flatten()
-    wy = np.exp(-(alpha * grad_y / np.median(grad_y)))
-    row = np.concatenate([idx_left, idx_right, idx_top, idx_bot])
-    col = np.concatenate([idx_right, idx_left, idx_bot, idx_top])
-    data = np.concatenate([wx, wx, wy, wy])
-    adj = scipy.sparse.csr_matrix((data, (row, col)), shape=(pixels, pixels))
-    deg = scipy.sparse.diags(np.array(adj.sum(axis=1)).flatten())
-    target_scales = np.ones_like(dense)
-    target_scales[mask] = sparse[mask] / dense[mask]
-    mask_f = mask.flatten().astype(np.float32)
-    conf_weights = np.ones(pixels)
-    scale_field = np.ones(pixels)
-    for _ in range(iters):
-        dynamic_lam = mask_f * lam * conf_weights * wxy
-        A = deg - adj + scipy.sparse.diags(dynamic_lam)
-        b = dynamic_lam * target_scales.flatten()
-        scale_field, _ = scipy.sparse.linalg.cg(A, b, x0=scale_field)
-        residuals = np.abs(scale_field - target_scales.flatten()) * mask_f
-        sigma = np.median(residuals[mask_f > 0.5]) + 1e-5
-        conf_weights = 1.0 / (1.0 + (residuals / (2 * sigma))**2)
-    return dense * scale_field.reshape((height, width))
+    """ Refines a dense depth map using sparse anchors. """
+    rbf = scipy.interpolate.RBFInterpolator(
+        np.argwhere(mask) / np.array(dense.shape),
+        sparse[mask] / dense[mask],
+        kernel='thin_plate_spline', smoothing=0.5
+    )
+    yy, xx = np.mgrid[0:dense.shape[0], 0:dense.shape[1]]
+    coords = np.stack([yy.ravel(), xx.ravel()], axis=-1)
+    scale_field = rbf(coords / np.array(dense.shape)).reshape(dense.shape)
+    return dense * scale_field
 
 
-def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool) -> list[tuple]:
+def estimate_params_moge(
+    cams: list[Camera], imgs: list[torch.Tensor], use_loftr: bool, center: None | tuple = None, up: None | tuple = None
+) -> list[tuple]:
     """ Estimate camera parameters and generate point clouds. """
     known_extr = any(cam.has_extrinsics() for cam in cams)
     moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal")
@@ -295,15 +266,29 @@ def estimate_params_moge(cams: list[Camera], imgs: list[torch.Tensor], use_loftr
     pts, clrs = [], []
     for cam, depth, img in zip(cams, depths, imgs):
         cam.scale(pts_scale)
-        pts3d = points_from_depth(cam, torch.from_numpy(depth), pts_scale)
+        depth = torch.from_numpy(depth)
+        if center is not None and up is not None:
+            # If the floor is known, force depth to be above it.
+            height, width = depth.shape
+            v, u = torch.meshgrid(
+                torch.arange(height), torch.arange(width), indexing="ij")
+            uv = cam.undistort_points(torch.stack([u, v], dim=-1))
+            dirs = torch.concat(
+                [uv, torch.ones(height, width, 1)], dim=-1) @ cam.rotation
+            c = torch.tensor(center, dtype=torch.float32)
+            n = torch.tensor(up, dtype=torch.float32)
+            denom = (dirs @ n)
+            plane, mask = ((c - cam.center()) @ n) / denom, denom < -1e-5
+            depth[mask] = torch.minimum(depth[mask], plane[mask])
+        pts3d = points_from_depth(cam, depth, pts_scale)
         pts.append(pts3d.numpy())
         clrs.append(img.numpy())
     return list(zip(pts, clrs))
 
 
 def augment_tracks(
-    file: str, cams: list[Camera], streams: list[str],
-    use_loftr: bool = False, use_moge: bool = False
+    file: str, cams: list[Camera], streams: list[str], use_loftr: bool = False,
+    use_moge: bool = False, center: None | tuple = None, up: None | tuple = None
 ):
     """
     Augments a recorded tracking data JSON file with video stream URLs,
@@ -327,7 +312,7 @@ def augment_tracks(
     if use_moge:
         if not MOGE_AVAILABLE:
             raise RuntimeError("MoGe-2 not found.")
-        clouds = estimate_params_moge(cams, backgrounds, use_loftr)
+        clouds = estimate_params_moge(cams, backgrounds, use_loftr, center, up)
     else:
         clouds = estimate_params_simple(cams, backgrounds, use_loftr)
     all_pts, all_clrs = [], []

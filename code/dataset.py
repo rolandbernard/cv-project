@@ -13,11 +13,11 @@ import source
 from camera import Camera
 
 
-def download_file(filename: str, data_url: str):
+def download_file(filename: str, data_url: str, first_n: None | int = None):
     """ Download a file from the given url and put it into the given filename. """
     try:
         with urllib.request.urlopen(data_url) as req_stream:
-            data = req_stream.read()
+            data = req_stream.read(first_n)
             with open(filename, "wb") as file:
                 file.write(data)
     except:
@@ -212,7 +212,7 @@ class CmuPanopticDataset:
         """ Create an instance of the class with the data stored in the given directory. """
         self.path = path
 
-    def download_scene(self, name: str, num_hd_cams: int = 0, num_vga_cams: int = 0):
+    def download_scene(self, name: str, num_hd_cams: int = 0, num_vga_cams: int = 0, first_n: None | int = None):
         os.makedirs(f"{self.path}/{name}", exist_ok=True)
         if not os.path.exists(f"{self.path}/{name}/calibration.json"):
             download_file(f"{self.path}/{name}/calibration.json",
@@ -227,12 +227,14 @@ class CmuPanopticDataset:
             filename = f"hd_00_{i:02d}.mp4"
             if not os.path.exists(f"{self.path}/{name}/{filename}"):
                 download_file(f"{self.path}/{name}/{filename}",
-                              f"{self.endpoint}/{name}/videos/hd_shared_crf20/{filename}")
+                              f"{self.endpoint}/{name}/videos/hd_shared_crf20/{filename}",
+                              first_n)
         for i in range(num_vga_cams):
             filename = f"vga_{self.vga_panels[i]:02d}_{self.vga_nodes[i]:02d}.mp4"
             if not os.path.exists(f"{self.path}/{name}/{filename}"):
                 download_file(f"{self.path}/{name}/{filename}",
-                              f"{self.endpoint}/{name}/videos/vga_shared_crf10/{filename}")
+                              f"{self.endpoint}/{name}/videos/vga_shared_crf10/{filename}",
+                              first_n)
 
     def is_valid_scene(self, name: str, vga_gt=True, hd_gt=False, vga=True, hd=False) -> bool:
         """
